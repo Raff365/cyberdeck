@@ -288,9 +288,7 @@ body::after {
 <div id="signin-overlay">
   <div class="so-title">RAFF NET // ACCESS REQUIRED</div>
   <div class="so-sub">[ AUTHENTICATE TO CONTINUE ]</div>
-  <input type="email" id="signin-email" placeholder="EMAIL" value="murphyrafferty2013@gmail.com" autocomplete="off"/>
-  <input type="password" id="signin-pass" placeholder="PASSWORD" autocomplete="off" onkeydown="if(event.key==='Enter')doSignIn()"/>
-  <button onclick="doSignIn()">[ ACCESS SYSTEM ]</button>
+  <button onclick="doGoogleSignIn()">[ SIGN IN WITH GOOGLE ]</button>
   <div id="signin-error"></div>
 </div>
 
@@ -503,12 +501,11 @@ const db   = firebase.firestore();
 auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
 
 // ── SIGN IN ──
-async function doSignIn() {
-  const email = document.getElementById('signin-email').value.trim();
-  const pass  = document.getElementById('signin-pass').value;
+async function doGoogleSignIn() {
   document.getElementById('signin-error').textContent = '';
   try {
-    await auth.signInWithEmailAndPassword(email, pass);
+    const provider = new firebase.auth.GoogleAuthProvider();
+    await auth.signInWithPopup(provider);
   } catch(e) {
     document.getElementById('signin-error').textContent = '[ ACCESS DENIED: ' + e.code + ' ]';
   }
