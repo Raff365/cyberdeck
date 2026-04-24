@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CINOLO // RAFF NET</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=VT323&display=swap" rel="stylesheet">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+
+:root {
+  --green:  #00ff41;
+  --green2: #00cc33;
+  --green3: rgba(0,255,65,0.12);
+  --red:    #ff2222;
+  --red2:   rgba(255,34,34,0.15);
+  --dim:    rgba(0,255,65,0.35);
+  --dimmer: rgba(0,255,65,0.12);
+  --bg:     #000a00;
+}
+
+html, body {
+  width:100%; height:100%;
+  overflow:hidden;
+  background: var(--bg);
+  color: var(--green);
+  font-family: 'Share Tech Mono', monospace;
+  cursor: none;
+}
+
+/* ── SCANLINES ── */
+body::before {
+  content:'';
+  position:fixed; inset:0; z-index:300;
+  pointer-events:none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.18) 2px,
+    rgba(0,0,0,0.18) 4px
+  );
+}
+
+/* ── VIGNETTE ── */
+body::after {
+  content:'';
+  position:fixed; inset:0; z-index:299;
+  pointer-events:none;
+  background: radial-gradient(ellipse at center,
+    transparent 40%,
+    rgba(0,5,0,0.75) 100%);
+}
+
+/* ── MATRIX RAIN CANVAS ── */
+#matrix {
+  position:fixed; inset:0; z-index:1;
+  opacity:0.18;
+}
+
+/* ── WEB BACKGROUND ── */
+.web-bg {
+  position:fixed; inset:0; z-index:2;
+  width:100%; height:100%;
+  pointer-events:none;
+}
+
+/* ── PAGE ── */
+.page {
+  position:relative; z-index:10;
+  width:100vw; height:100vh;
+  display:grid;
+  grid-template-rows: auto auto 1fr auto;
+  padding:16px 20px 12px;
+  gap:12px;
+}
+
+/* ── HEADER ── */
+.header {
+  display:flex; align-items:flex-start; justify-content:space-between;
+  border-bottom:1px solid var(--dim);
+  padding-bottom:10px;
+}
+
+.ascii-spider {
+  font-family:'VT323',monospace;
+  font-size:13px;
+  line-height:1.2;
+  color:var(--red);
+  text-shadow:0 0 8px var(--red);
+  opacity:0.85;
+}
+
+.title-block { text-align:center; }
+.title-main {
+  font-family:'VT323',monospace;
+  font-size:42px;
+  letter-spacing:6px;
+  color:var(--green);
+  text-shadow:0 0 20px var(--green), 0 0 40px rgba(0,255,65,0.4);
+  line-height:1;
+}
+.title-sub {
+  font-size:10px;
+  color:var(--dim);
+  letter-spacing:4px;
+  margin-top:2px;
+}
+
+.header-right {
+  text-align:right;
+  font-size:10px;
+  color:var(--dim);
+  line-height:2;
+}
+.live-indicator {
+  color:var(--red);
+  text-shadow:0 0 8px var(--red);
+  animation:blink 1.2s step-end infinite;
+  font-size:11px;
+  letter-spacing:2px;
+}
+@keyframes blink { 50%{opacity:0} }
+
+/* ── BOOT TEXT ── */
+.boot-line {
+  font-size:10px;
+  color:var(--dim);
+  letter-spacing:1px;
+  display:flex; gap:20px; flex-wrap:wrap;
+  padding:4px 0;
+  border-bottom:1px solid var(--dimmer);
+}
+.boot-line span { color:var(--green2); }
+
+/* ── STATS GRID ── */
+.stats {
+  display:grid;
+  grid-template-columns: repeat(4,1fr) 1.5fr 1.5fr;
+  grid-template-rows: 1fr 1fr;
+  gap:10px;
+}
+
+.panel {
+  background: rgba(0,10,0,0.8);
+  border:1px solid var(--dim);
+  border-radius:2px;
+  padding:12px 14px;
+  position:relative;
+  overflow:hidden;
+  display:flex; flex-direction:column; justify-content:space-between;
+}
+/* corner brackets */
+.panel::before, .panel::after {
+  content:'';
+  position:absolute;
+  width:8px; height:8px;
+  border-color:var(--green);
+  border-style:solid;
+  opacity:0.6;
+}
+.panel::before { top:3px; left:3px; border-width:1px 0 0 1px; }
+.panel::after  { bottom:3px; right:3px; border-width:0 1px 1px 0; }
+
+.panel.red-panel {
+  border-color:rgba(255,34,34,0.5);
+  background:rgba(10,0,0,0.8);
+}
+.panel.red-panel::before,
+.panel.red-panel::after { border-color:var(--red); }
+
+.panel.wide { grid-column:span 2; }
+
+.panel-label {
+  font-size:9px;
+  letter-spacing:3px;
+  color:var(--dim);
+  text-transform:uppercase;
+  margin-bottom:4px;
+}
+.panel.red-panel .panel-label { color:rgba(255,34,34,0.6); }
+
+.panel-value {
+  font-family:'VT323',monospace;
+  font-size:58px;
+  line-height:1;
+  color:var(--green);
+  text-shadow:0 0 20px rgba(0,255,65,0.6);
+  letter-spacing:2px;
+}
+.panel.red-panel .panel-value {
+  color:var(--red);
+  text-shadow:0 0 20px rgba(255,34,34,0.6);
+}
+
+.panel-sub {
+  font-size:9px;
+  color:var(--dim);
+  letter-spacing:1px;
+  margin-top:4px;
+}
+.panel-sub .hi { color:var(--green); }
+.panel-sub .rd { color:var(--red); }
+
+/* tier bars */
+.tier-rows { display:flex; flex-direction:column; gap:7px; margin-top:6px; flex:1; justify-content:center; }
+.tier-row  { display:flex; align-items:center; gap:8px; font-size:9px; }
+.tier-name { color:var(--dim); letter-spacing:1px; width:36px; }
+.tier-track { flex:1; height:4px; background:rgba(0,255,65,0.08); border:1px solid rgba(0,255,65,0.15); }
+.tier-fill  { height:100%; transition:width 1.2s ease; }
+.tier-fill.free  { background:var(--dim); }
+.tier-fill.basic { background:#6366f1; box-shadow:0 0 6px #6366f1; }
+.tier-fill.pro   { background:var(--red); box-shadow:0 0 6px var(--red); }
+.tier-count { color:var(--green); width:24px; text-align:right; font-size:10px; }
+
+/* feed */
+.feed { display:flex; flex-direction:column; gap:5px; margin-top:6px; flex:1; overflow:hidden; }
+.feed-item {
+  font-size:10px;
+  color:var(--dim);
+  letter-spacing:0.5px;
+  display:flex; gap:8px; align-items:center;
+  animation:fadeIn .4s ease both;
+  border-left:2px solid var(--dimmer);
+  padding-left:6px;
+}
+@keyframes fadeIn { from{opacity:0;transform:translateX(-6px)} to{opacity:1;transform:none} }
+.feed-item .fi-type { color:var(--green); flex-shrink:0; }
+.feed-item .fi-type.red { color:var(--red); }
+.feed-item .fi-text { flex:1; }
+.feed-item .fi-text strong { color:var(--green); }
+.feed-item .fi-time { color:rgba(0,255,65,0.2); flex-shrink:0; }
+
+/* ── FOOTER ── */
+.footer {
+  border-top:1px solid var(--dimmer);
+  padding-top:8px;
+  display:flex; justify-content:space-between; align-items:center;
+  font-size:9px; color:var(--dimmer); letter-spacing:2px;
+}
+.footer .clock { color:var(--dim); font-size:11px; }
+
+/* web glow */
+.web-glow {
+  position:fixed; z-index:3;
+  pointer-events:none;
+  opacity:0.06;
+}
+
+/* active users pulse */
+@keyframes numPulse { 0%,100%{text-shadow:0 0 20px rgba(255,34,34,0.6)} 50%{text-shadow:0 0 40px rgba(255,34,34,0.9),0 0 60px rgba(255,34,34,0.4)} }
+#active-now { animation:numPulse 2s ease-in-out infinite; }
+</style>
+</head>
+<body>
+
+<!-- matrix rain -->
+<canvas id="matrix"></canvas>
+
+<!-- web pattern background -->
+<svg class="web-bg" viewBox="0 0 1280 720" preserveAspectRatio="xMidYMid slice">
+  <g stroke="#00ff41" stroke-width="0.5" fill="none" opacity="0.07">
+    <line x1="0" y1="0" x2="1280" y2="360"/>
+    <line x1="0" y1="0" x2="900"  y2="720"/>
+    <line x1="0" y1="0" x2="500"  y2="720"/>
+    <line x1="0" y1="0" x2="1280" y2="200"/>
+    <line x1="0" y1="0" x2="1280" y2="560"/>
+    <line x1="0" y1="0" x2="200"  y2="720"/>
+    <path d="M 0,200 Q 200,0 400,0"/>
+    <path d="M 0,400 Q 400,0 800,0"/>
+    <path d="M 0,600 Q 600,0 1200,0"/>
+    <path d="M 100,720 Q 900,100 1280,200"/>
+    <path d="M 300,720 Q 1000,300 1280,400"/>
+    <path d="M 500,720 Q 1100,450 1280,540"/>
+  </g>
+  <!-- red web from bottom right (spider's corner) -->
+  <g stroke="#ff2222" stroke-width="0.4" fill="none" opacity="0.08">
+    <line x1="1280" y1="720" x2="0"   y2="360"/>
+    <line x1="1280" y1="720" x2="380" y2="0"/>
+    <line x1="1280" y1="720" x2="780" y2="0"/>
+    <line x1="1280" y1="720" x2="0"   y2="160"/>
+    <path d="M 1280,520 Q 1080,720 880,720"/>
+    <path d="M 1280,320 Q 880,720 480,720"/>
+    <path d="M 1180,0 Q 1280,400 1280,600"/>
+  </g>
+</svg>
+
+<!-- ── PAGE ── -->
+<div class="page">
+
+  <!-- HEADER -->
+  <div class="header">
+    <pre class="ascii-spider">  /\  /\
+ /  \/  \
+(  o  o  )
+ \  /\  /
+  \/  \/</pre>
+
+    <div class="title-block">
+      <div class="title-main">CINOLO // RAFF NET</div>
+      <div class="title-sub">[ UNAUTHORIZED ACCESS DETECTED ] [ SYSTEM NOMINAL ]</div>
+    </div>
+
+    <div class="header-right">
+      <div class="live-indicator">▶ LIVE FEED</div>
+      <div>SYS: <span style="color:var(--green)">ONLINE</span></div>
+      <div>NODE: <span style="color:var(--green)">STL-01</span></div>
+      <div id="clock-header">--:--:--</div>
+    </div>
+  </div>
+
+  <!-- BOOT STATUS BAR -->
+  <div class="boot-line">
+    <div>CONN: <span>FIREBASE ✓</span></div>
+    <div>CONN: <span>STRIPE ✓</span></div>
+    <div>UPTIME: <span id="uptime">00:00:00</span></div>
+    <div>RAFF@CYBERDECK:~$ <span id="typing"></span></div>
+  </div>
+
+  <!-- STATS -->
+  <div class="stats">
+
+    <!-- Total Users -->
+    <div class="panel">
+      <div class="panel-label">// total users</div>
+      <div class="panel-value" id="total-users">247</div>
+      <div class="panel-sub"><span class="hi">+12</span> today</div>
+    </div>
+
+    <!-- Swipes Today -->
+    <div class="panel">
+      <div class="panel-label">// swipes today</div>
+      <div class="panel-value" id="swipes-today">1840</div>
+      <div class="panel-sub"><span class="hi">76</span>/hr avg</div>
+    </div>
+
+    <!-- Revenue -->
+    <div class="panel">
+      <div class="panel-label">// revenue total</div>
+      <div class="panel-value" style="font-size:42px;" id="revenue">$142</div>
+      <div class="panel-sub"><span class="hi">$38</span> this month</div>
+    </div>
+
+    <!-- Active Now -->
+    <div class="panel red-panel">
+      <div class="panel-label">// active now</div>
+      <div class="panel-value" id="active-now">8</div>
+      <div class="panel-sub"><span class="rd">last 5 min</span></div>
+    </div>
+
+    <!-- Tier Breakdown -->
+    <div class="panel wide">
+      <div class="panel-label">// tier breakdown</div>
+      <div class="tier-rows">
+        <div class="tier-row">
+          <div class="tier-name">FREE</div>
+          <div class="tier-track"><div class="tier-fill free" id="bar-free" style="width:0%"></div></div>
+          <div class="tier-count" id="cnt-free">198</div>
+        </div>
+        <div class="tier-row">
+          <div class="tier-name">BASIC</div>
+          <div class="tier-track"><div class="tier-fill basic" id="bar-basic" style="width:0%"></div></div>
+          <div class="tier-count" id="cnt-basic">31</div>
+        </div>
+        <div class="tier-row">
+          <div class="tier-name">PRO</div>
+          <div class="tier-track"><div class="tier-fill pro" id="bar-pro" style="width:0%"></div></div>
+          <div class="tier-count" id="cnt-pro">18</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Activity Feed -->
+    <div class="panel wide">
+      <div class="panel-label">// recent activity</div>
+      <div class="feed" id="feed"></div>
+    </div>
+
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <div>CINOLO RAFF NET v2.3 // BUILT STL // RAFF@CYBERDECK</div>
+    <div class="clock" id="clock">--:--:-- --</div>
+  </div>
+
+</div>
+
+<script>
+// ── MATRIX RAIN ──
+const canvas = document.getElementById('matrix');
+const ctx    = canvas.getContext('2d');
+canvas.width  = window.innerWidth;
+canvas.height = window.innerHeight;
+
+const cols = Math.floor(canvas.width / 16);
+const drops = Array(cols).fill(1);
+const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*()アイウエオカキクケコサシスセソタチツテト';
+
+function drawMatrix() {
+  ctx.fillStyle = 'rgba(0,10,0,0.05)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.font = '14px Share Tech Mono';
+  drops.forEach((y, i) => {
+    const char = chars[Math.floor(Math.random() * chars.length)];
+    // mix green and red
+    const isRed = Math.random() < 0.04;
+    ctx.fillStyle = isRed ? 'rgba(255,34,34,0.8)' : (Math.random() < 0.05 ? '#ffffff' : '#00ff41');
+    ctx.fillText(char, i * 16, y * 16);
+    if (y * 16 > canvas.height && Math.random() > 0.975) drops[i] = 0;
+    drops[i]++;
+  });
+}
+setInterval(drawMatrix, 50);
+
+// ── TIER BARS ──
+const tiers = { free:198, basic:31, pro:18 };
+const total = tiers.free + tiers.basic + tiers.pro;
+setTimeout(() => {
+  document.getElementById('bar-free').style.width  = (tiers.free  / total * 100) + '%';
+  document.getElementById('bar-basic').style.width = (tiers.basic / total * 100) + '%';
+  document.getElementById('bar-pro').style.width   = (tiers.pro   / total * 100) + '%';
+}, 400);
+
+// ── FEED ──
+const feedData = [
+  { type:'>>',  red:false, text:'<strong>pineapplevr</strong> swiped 14 movies', time:'2m' },
+  { type:'$$$', red:true,  text:'Stripe payment <strong>$3.00</strong> received', time:'8m' },
+  { type:'>>',  red:false, text:'<strong>raff</strong> swiped 6 movies', time:'15m' },
+  { type:'NEW', red:false, text:'New <strong>Pro</strong> subscriber joined', time:'22m' },
+  { type:'>>',  red:false, text:'New user signed up', time:'34m' },
+];
+const feedEl = document.getElementById('feed');
+feedData.forEach((item, i) => {
+  const d = document.createElement('div');
+  d.className = 'feed-item';
+  d.style.animationDelay = (i * 0.1) + 's';
+  d.innerHTML = `<span class="fi-type${item.red?' red':''}">[${item.type}]</span><span class="fi-text">${item.text}</span><span class="fi-time">${item.time}</span>`;
+  feedEl.appendChild(d);
+});
+
+// ── CLOCK ──
+function tick() {
+  const now = new Date();
+  const t = now.toLocaleTimeString('en-US', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  document.getElementById('clock').textContent = t;
+  document.getElementById('clock-header').textContent = t;
+}
+tick(); setInterval(tick, 1000);
+
+// ── UPTIME ──
+let secs = 0;
+setInterval(() => {
+  secs++;
+  const h = String(Math.floor(secs/3600)).padStart(2,'0');
+  const m = String(Math.floor((secs%3600)/60)).padStart(2,'0');
+  const s = String(secs%60).padStart(2,'0');
+  document.getElementById('uptime').textContent = `${h}:${m}:${s}`;
+}, 1000);
+
+// ── TYPING EFFECT ──
+const phrases = ['scanning nodes...','your friendly neighborhood raff','uplink secure','amazing spider-raff 🕷','STL-01 connected','with great power comes great cinolo'];
+let pi = 0, ci = 0, typing = false;
+const typingEl = document.getElementById('typing');
+function typeNext() {
+  if (ci < phrases[pi].length) {
+    typingEl.textContent = phrases[pi].slice(0, ++ci) + '_';
+    setTimeout(typeNext, 60);
+  } else {
+    setTimeout(() => {
+      typingEl.textContent = '';
+      ci = 0;
+      pi = (pi + 1) % phrases.length;
+      setTimeout(typeNext, 500);
+    }, 2000);
+  }
+}
+typeNext();
+
+// ── ACTIVE USERS FLUCTUATE ──
+let activeVal = 8;
+setInterval(() => {
+  activeVal = Math.max(1, activeVal + Math.floor(Math.random()*3) - 1);
+  document.getElementById('active-now').textContent = activeVal;
+}, 6000);
+
+// ── SWIPES TICK UP ──
+let swipes = 1840;
+setInterval(() => {
+  swipes += Math.floor(Math.random() * 3);
+  document.getElementById('swipes-today').textContent = swipes.toLocaleString();
+}, 4000);
+</script>
+
+<!-- Cinolo app icon pixelated -->
+<img src="https://raw.githubusercontent.com/Raff365/cyberdeck/main/cinolo-icon.png"
+  style="
+    position:fixed;
+    bottom:40px;
+    right:520px;
+    z-index:50;
+    pointer-events:none;
+    height:90px;
+    width:90px;
+    opacity:0.85;
+    image-rendering:pixelated;
+    filter:drop-shadow(0 0 12px rgba(249,115,22,0.8)) brightness(1.1);
+  "
+/>
+<!-- Spider-Men bottom right -->
+<img src="https://raw.githubusercontent.com/Raff365/cyberdeck/main/spiderman.png"
+  style="
+    position:fixed;
+    bottom:0;
+    right:280px;
+    z-index:50;
+    pointer-events:none;
+    height:220px;
+    width:auto;
+    opacity:0.85;
+    filter:drop-shadow(0 0 12px rgba(100,100,255,0.5));
+  "
+/>
+<img src="https://raw.githubusercontent.com/Raff365/cyberdeck/main/goblin.png"
+  style="
+    position:fixed;
+    bottom:0;
+    right:10px;
+    z-index:50;
+    pointer-events:none;
+    height:260px;
+    width:auto;
+    opacity:0.85;
+    filter:drop-shadow(0 0 12px rgba(255,34,34,0.5));
+  "
+/>
+
+</body>
+</html>
