@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CINOLO // RAFF NET</title>
 <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=VT323&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 
@@ -250,9 +253,46 @@ body::after {
 /* active users pulse */
 @keyframes numPulse { 0%,100%{text-shadow:0 0 20px rgba(255,34,34,0.6)} 50%{text-shadow:0 0 40px rgba(255,34,34,0.9),0 0 60px rgba(255,34,34,0.4)} }
 #active-now { animation:numPulse 2s ease-in-out infinite; }
+
+/* sign-in overlay */
+#signin-overlay {
+  position:fixed; inset:0; z-index:500;
+  background:rgba(0,5,0,0.96);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:14px;
+}
+#signin-overlay .so-title {
+  font-family:'VT323',monospace; font-size:36px; color:var(--green);
+  text-shadow:0 0 20px var(--green); letter-spacing:4px;
+}
+#signin-overlay .so-sub { font-size:10px; color:var(--dim); letter-spacing:3px; }
+#signin-overlay input {
+  background:rgba(0,20,0,0.8); border:1px solid var(--dim); border-radius:2px;
+  color:var(--green); font-family:'Share Tech Mono',monospace; font-size:13px;
+  padding:10px 14px; width:280px; outline:none; letter-spacing:1px;
+}
+#signin-overlay input:focus { border-color:var(--green); box-shadow:0 0 8px rgba(0,255,65,0.3); }
+#signin-overlay button {
+  background:transparent; border:1px solid var(--green); color:var(--green);
+  font-family:'Share Tech Mono',monospace; font-size:12px; letter-spacing:3px;
+  padding:10px 32px; cursor:pointer; width:280px;
+  transition:all .2s;
+}
+#signin-overlay button:hover { background:rgba(0,255,65,0.1); box-shadow:0 0 12px rgba(0,255,65,0.3); }
+#signin-error { font-size:10px; color:var(--red); letter-spacing:2px; min-height:14px; }
 </style>
 </head>
 <body>
+
+<!-- sign-in overlay -->
+<div id="signin-overlay">
+  <div class="so-title">RAFF NET // ACCESS REQUIRED</div>
+  <div class="so-sub">[ AUTHENTICATE TO CONTINUE ]</div>
+  <input type="email" id="signin-email" placeholder="EMAIL" value="murphyrafferty2013@gmail.com" autocomplete="off"/>
+  <input type="password" id="signin-pass" placeholder="PASSWORD" autocomplete="off" onkeydown="if(event.key==='Enter')doSignIn()"/>
+  <button onclick="doSignIn()">[ ACCESS SYSTEM ]</button>
+  <div id="signin-error"></div>
+</div>
 
 <!-- matrix rain -->
 <canvas id="matrix"></canvas>
@@ -392,18 +432,15 @@ const canvas = document.getElementById('matrix');
 const ctx    = canvas.getContext('2d');
 canvas.width  = window.innerWidth;
 canvas.height = window.innerHeight;
-
-const cols = Math.floor(canvas.width / 16);
+const cols  = Math.floor(canvas.width / 16);
 const drops = Array(cols).fill(1);
 const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*()アイウエオカキクケコサシスセソタチツテト';
-
 function drawMatrix() {
   ctx.fillStyle = 'rgba(0,10,0,0.05)';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.font = '14px Share Tech Mono';
   drops.forEach((y, i) => {
     const char = chars[Math.floor(Math.random() * chars.length)];
-    // mix green and red
     const isRed = Math.random() < 0.04;
     ctx.fillStyle = isRed ? 'rgba(255,34,34,0.8)' : (Math.random() < 0.05 ? '#ffffff' : '#00ff41');
     ctx.fillText(char, i * 16, y * 16);
@@ -412,32 +449,6 @@ function drawMatrix() {
   });
 }
 setInterval(drawMatrix, 50);
-
-// ── TIER BARS ──
-const tiers = { free:198, basic:31, pro:18 };
-const total = tiers.free + tiers.basic + tiers.pro;
-setTimeout(() => {
-  document.getElementById('bar-free').style.width  = (tiers.free  / total * 100) + '%';
-  document.getElementById('bar-basic').style.width = (tiers.basic / total * 100) + '%';
-  document.getElementById('bar-pro').style.width   = (tiers.pro   / total * 100) + '%';
-}, 400);
-
-// ── FEED ──
-const feedData = [
-  { type:'>>',  red:false, text:'<strong>pineapplevr</strong> swiped 14 movies', time:'2m' },
-  { type:'$$$', red:true,  text:'Stripe payment <strong>$3.00</strong> received', time:'8m' },
-  { type:'>>',  red:false, text:'<strong>raff</strong> swiped 6 movies', time:'15m' },
-  { type:'NEW', red:false, text:'New <strong>Pro</strong> subscriber joined', time:'22m' },
-  { type:'>>',  red:false, text:'New user signed up', time:'34m' },
-];
-const feedEl = document.getElementById('feed');
-feedData.forEach((item, i) => {
-  const d = document.createElement('div');
-  d.className = 'feed-item';
-  d.style.animationDelay = (i * 0.1) + 's';
-  d.innerHTML = `<span class="fi-type${item.red?' red':''}">[${item.type}]</span><span class="fi-text">${item.text}</span><span class="fi-time">${item.time}</span>`;
-  feedEl.appendChild(d);
-});
 
 // ── CLOCK ──
 function tick() {
@@ -460,7 +471,7 @@ setInterval(() => {
 
 // ── TYPING EFFECT ──
 const phrases = ['scanning nodes...','your friendly neighborhood raff','uplink secure','amazing spider-raff 🕷','STL-01 connected','with great power comes great cinolo'];
-let pi = 0, ci = 0, typing = false;
+let pi = 0, ci = 0;
 const typingEl = document.getElementById('typing');
 function typeNext() {
   if (ci < phrases[pi].length) {
@@ -477,19 +488,147 @@ function typeNext() {
 }
 typeNext();
 
-// ── ACTIVE USERS FLUCTUATE ──
-let activeVal = 8;
+// ── FIREBASE ──
+const fbConfig = {
+  apiKey: "AIzaSyA6Ny_eLFLOkHr3eGM4-GXqfXIZBBM7IMI",
+  authDomain: "rolo-972c3.firebaseapp.com",
+  projectId: "rolo-972c3",
+  storageBucket: "rolo-972c3.firebasestorage.app",
+  messagingSenderId: "854241207349",
+  appId: "1:854241207349:web:8db0852076efb597a27d7c"
+};
+firebase.initializeApp(fbConfig);
+const auth = firebase.auth();
+const db   = firebase.firestore();
+auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+
+// ── SIGN IN ──
+async function doSignIn() {
+  const email = document.getElementById('signin-email').value.trim();
+  const pass  = document.getElementById('signin-pass').value;
+  document.getElementById('signin-error').textContent = '';
+  try {
+    await auth.signInWithEmailAndPassword(email, pass);
+  } catch(e) {
+    document.getElementById('signin-error').textContent = '[ ACCESS DENIED: ' + e.code + ' ]';
+  }
+}
+
+// ── AUTH STATE ──
+auth.onAuthStateChanged(user => {
+  if (user) {
+    document.getElementById('signin-overlay').style.display = 'none';
+    loadStats();
+  } else {
+    document.getElementById('signin-overlay').style.display = 'flex';
+  }
+});
+
+// ── HELPERS ──
+function timeAgo(date) {
+  const s = Math.floor((new Date() - date) / 1000);
+  if (s < 60)   return s + 's';
+  if (s < 3600)  return Math.floor(s/60) + 'm';
+  if (s < 86400) return Math.floor(s/3600) + 'h';
+  return Math.floor(s/86400) + 'd';
+}
+
+function setTierBars(free, basic, pro) {
+  const total = (free + basic + pro) || 1;
+  document.getElementById('cnt-free').textContent  = free;
+  document.getElementById('cnt-basic').textContent = basic;
+  document.getElementById('cnt-pro').textContent   = pro;
+  setTimeout(() => {
+    document.getElementById('bar-free').style.width  = (free  / total * 100) + '%';
+    document.getElementById('bar-basic').style.width = (basic / total * 100) + '%';
+    document.getElementById('bar-pro').style.width   = (pro   / total * 100) + '%';
+  }, 400);
+}
+
+function renderFeed(items) {
+  const feedEl = document.getElementById('feed');
+  feedEl.innerHTML = '';
+  items.forEach((item, i) => {
+    const d = document.createElement('div');
+    d.className = 'feed-item';
+    d.style.animationDelay = (i * 0.1) + 's';
+    d.innerHTML = `<span class="fi-type${item.red?' red':''}">[${item.type}]</span><span class="fi-text">${item.text}</span><span class="fi-time">${item.time}</span>`;
+    feedEl.appendChild(d);
+  });
+}
+
+// ── LOAD STATS ──
+async function loadStats() {
+  try {
+    // Total users
+    const usersSnap = await db.collection('users').get();
+    const totalUsers = usersSnap.size;
+    document.getElementById('total-users').textContent = totalUsers;
+
+    // Tier breakdown
+    const tiersSnap = await db.collection('tiers').get();
+    let basicCount = 0, proCount = 0;
+    tiersSnap.forEach(doc => {
+      const t = doc.data().tier;
+      if (t === 'basic') basicCount++;
+      if (t === 'pro')   proCount++;
+    });
+    const freeCount = Math.max(0, totalUsers - basicCount - proCount);
+    setTierBars(freeCount, basicCount, proCount);
+
+    // Revenue (monthly)
+    const monthly = basicCount * 1 + proCount * 3;
+    document.getElementById('revenue').textContent = '$' + monthly;
+
+    // Swipes — sum count field across all popularMovies
+    const moviesSnap = await db.collection('popularMovies').get();
+    let totalSwipes = 0;
+    moviesSnap.forEach(doc => { totalSwipes += (doc.data().count || 0); });
+    document.getElementById('swipes-today').textContent = totalSwipes.toLocaleString();
+
+    // Activity feed — last 8 entries
+    try {
+      const actSnap = await db.collection('activity').orderBy('createdAt','desc').limit(8).get();
+      if (!actSnap.empty) {
+        const items = [];
+        actSnap.forEach(doc => {
+          const d = doc.data();
+          const name = d.userName || d.displayName || 'user';
+          const type = d.type === 'swipe' ? '>>' : d.type === 'signup' ? 'NEW' : d.type === 'upgrade' ? '$$$' : '>>';
+          const red  = type === '$$$';
+          const text = d.type === 'upgrade'
+            ? `<strong>${name}</strong> upgraded to <strong>${d.tier||'Pro'}</strong>`
+            : d.type === 'signup'
+            ? `New user <strong>${name}</strong> joined`
+            : `<strong>${name}</strong> ${d.action || 'was active'}`;
+          const time = d.createdAt ? timeAgo(d.createdAt.toDate()) : '?';
+          items.push({ type, red, text, time });
+        });
+        renderFeed(items);
+      }
+    } catch(e) {
+      // fall back to placeholder feed
+      renderFeed([
+        { type:'>>', red:false, text:'<strong>pineapplevr</strong> swiped movies', time:'—' },
+        { type:'>>',  red:false, text:'<strong>raff</strong> checked watchlist',   time:'—' },
+      ]);
+    }
+
+    // Refresh every 60s
+    setTimeout(loadStats, 60000);
+
+  } catch(e) {
+    console.warn('Stats load error:', e.message);
+    setTimeout(loadStats, 15000);
+  }
+}
+
+// ── ACTIVE NOW — fluctuate while real data loads ──
+let activeVal = 1;
 setInterval(() => {
   activeVal = Math.max(1, activeVal + Math.floor(Math.random()*3) - 1);
   document.getElementById('active-now').textContent = activeVal;
 }, 6000);
-
-// ── SWIPES TICK UP ──
-let swipes = 1840;
-setInterval(() => {
-  swipes += Math.floor(Math.random() * 3);
-  document.getElementById('swipes-today').textContent = swipes.toLocaleString();
-}, 4000);
 </script>
 
 <!-- Cinolo app icon pixelated -->
