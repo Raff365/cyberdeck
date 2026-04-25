@@ -575,7 +575,7 @@ async function loadStats() {
 
     // Revenue — pull real numbers from Stripe via the stats endpoint
     try {
-      const stripeRes  = await fetch('https://cinolo-stripe.raff365.workers.dev/stats?token=raffdash');
+      const stripeRes  = await fetch('https://cinolo-stripe.raffattack911.workers.dev/stats?token=raffdash');
       const stripeData = await stripeRes.json();
       if (stripeData.totalRevenue) {
         document.getElementById('revenue').textContent = '$' + parseFloat(stripeData.totalRevenue).toFixed(0);
