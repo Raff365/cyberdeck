@@ -416,6 +416,37 @@ body::after {
 
   </div>
 
+  <!-- PAYOUT BREAKDOWN -->
+  <div class="panel" style="grid-column:span 6; display:flex; flex-direction:row; align-items:center; gap:28px; padding:14px 20px;">
+    <div style="font-size:9px;letter-spacing:3px;color:var(--dim);white-space:nowrap;">// monthly payout</div>
+    <div style="display:flex;gap:6px;align-items:center;font-size:11px;color:var(--dim);">
+      MRR <span id="pay-mrr" style="color:var(--green)">$0</span>
+    </div>
+    <div style="color:var(--dimmer)">−</div>
+    <div style="display:flex;gap:6px;align-items:center;font-size:11px;color:var(--dim);">
+      company 10% <span id="pay-company" style="color:var(--red)">$0</span>
+    </div>
+    <div style="color:var(--dimmer)">−</div>
+    <div style="display:flex;gap:6px;align-items:center;font-size:11px;color:var(--dim);">
+      infra <span style="color:var(--red)">$1</span>
+    </div>
+    <div style="color:var(--dimmer)">=</div>
+    <div style="display:flex;gap:20px;flex:1;justify-content:flex-end;">
+      <div style="text-align:center;">
+        <div style="font-size:9px;letter-spacing:2px;color:var(--dim);">RAFF</div>
+        <div id="pay-raff" style="font-family:'VT323',monospace;font-size:32px;color:var(--green);text-shadow:0 0 12px rgba(0,255,65,0.5);">$0</div>
+      </div>
+      <div style="text-align:center;">
+        <div style="font-size:9px;letter-spacing:2px;color:var(--dim);">BEN</div>
+        <div id="pay-ben" style="font-family:'VT323',monospace;font-size:32px;color:var(--green);text-shadow:0 0 12px rgba(0,255,65,0.5);">$0</div>
+      </div>
+      <div style="text-align:center;">
+        <div style="font-size:9px;letter-spacing:2px;color:var(--dim);">ELI</div>
+        <div id="pay-eli" style="font-family:'VT323',monospace;font-size:32px;color:var(--green);text-shadow:0 0 12px rgba(0,255,65,0.5);">$0</div>
+      </div>
+    </div>
+  </div>
+
   <!-- FOOTER -->
   <div class="footer">
     <div>CINOLO RAFF NET v2.3 // BUILT STL // RAFF@CYBERDECK</div>
@@ -627,6 +658,18 @@ async function loadStats() {
         { type:'>>',  red:false, text:'<strong>raff</strong> checked watchlist',   time:'—' },
       ]);
     }
+
+    // Payout calculation using MRR
+    const mrr         = basicCount * 1 + proCount * 3;
+    const afterCo     = mrr * 0.9;
+    const distributable = Math.max(0, afterCo - 1);
+    const each        = (distributable / 3).toFixed(2);
+    const cocut       = (mrr * 0.1).toFixed(2);
+    document.getElementById('pay-mrr').textContent     = '$' + mrr.toFixed(2);
+    document.getElementById('pay-company').textContent = '$' + cocut;
+    document.getElementById('pay-raff').textContent    = '$' + each;
+    document.getElementById('pay-ben').textContent     = '$' + each;
+    document.getElementById('pay-eli').textContent     = '$' + each;
 
     // Update last-refreshed time
     const now = new Date().toLocaleTimeString('en-US', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
