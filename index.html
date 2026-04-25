@@ -611,12 +611,12 @@ async function loadStats() {
       const stripeRes  = await fetch('https://cinolo-stripe.raffattack911.workers.dev/stats?token=raffdash');
       const stripeData = await stripeRes.json();
 
-      // Monthly revenue (MRR)
-      document.getElementById('revenue').textContent = '$' + (sBasic * 1 + sPro * 3).toFixed(0);
-
       // Tier bars from Stripe (accurate)
       const sBasic = stripeData.basicCount || 0;
       const sPro   = stripeData.proCount   || 0;
+
+      // Monthly revenue (MRR)
+      document.getElementById('revenue').textContent = '$' + (sBasic * 1 + sPro * 3).toFixed(0);
       setTierBars(Math.max(0, totalUsers - sBasic - sPro), sBasic, sPro);
 
       // Payout using Stripe MRR
