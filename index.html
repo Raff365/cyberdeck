@@ -140,7 +140,7 @@ body::after {
 .stats {
   display:grid;
   grid-template-columns: repeat(4,1fr) 1.5fr 1.5fr;
-  grid-template-rows: 1fr 1fr;
+  grid-template-rows: 1fr 1fr auto;
   gap:10px;
 }
 
@@ -414,10 +414,9 @@ body::after {
       <div class="feed" id="feed"></div>
     </div>
 
-  </div>
 
-  <!-- PAYOUT BREAKDOWN -->
-  <div class="panel" style="grid-column:span 6; display:flex; flex-direction:row; align-items:center; gap:28px; padding:14px 20px;">
+    <!-- PAYOUT BREAKDOWN -->
+    <div class="panel" style="grid-column:span 6; display:flex; flex-direction:row; align-items:center; gap:28px; padding:14px 20px;">
     <div style="font-size:9px;letter-spacing:3px;color:var(--dim);white-space:nowrap;">// monthly payout</div>
     <div style="display:flex;gap:6px;align-items:center;font-size:11px;color:var(--dim);">
       MRR <span id="pay-mrr" style="color:var(--green)">$0</span>
@@ -445,6 +444,8 @@ body::after {
         <div id="pay-eli" style="font-family:'VT323',monospace;font-size:32px;color:var(--green);text-shadow:0 0 12px rgba(0,255,65,0.5);">$0</div>
       </div>
     </div>
+    </div>
+
   </div>
 
   <!-- FOOTER -->
