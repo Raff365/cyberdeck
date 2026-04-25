@@ -606,24 +606,43 @@ async function loadStats() {
     const freeCount = Math.max(0, totalUsers - basicCount - proCount);
     setTierBars(freeCount, basicCount, proCount);
 
-    // Revenue — pull real numbers from Stripe via the stats endpoint
+    // Revenue + payout — pull real numbers from Stripe
     try {
       const stripeRes  = await fetch('https://cinolo-stripe.raffattack911.workers.dev/stats?token=raffdash');
       const stripeData = await stripeRes.json();
+
+      // Total revenue
       if (stripeData.totalRevenue) {
         document.getElementById('revenue').textContent = '$' + parseFloat(stripeData.totalRevenue).toFixed(0);
       }
-      if (stripeData.basicCount !== undefined) {
-        setTierBars(
-          Math.max(0, totalUsers - stripeData.basicCount - stripeData.proCount),
-          stripeData.basicCount,
-          stripeData.proCount
-        );
-      }
+
+      // Tier bars from Stripe (accurate)
+      const sBasic = stripeData.basicCount || 0;
+      const sPro   = stripeData.proCount   || 0;
+      setTierBars(Math.max(0, totalUsers - sBasic - sPro), sBasic, sPro);
+
+      // Payout using Stripe MRR
+      const mrr           = sBasic * 1 + sPro * 3;
+      const afterCo       = mrr * 0.9;
+      const distributable = Math.max(0, afterCo - 1);
+      const each          = (distributable / 3).toFixed(2);
+      document.getElementById('pay-mrr').textContent     = '$' + mrr.toFixed(2);
+      document.getElementById('pay-company').textContent = '$' + (mrr * 0.1).toFixed(2);
+      document.getElementById('pay-raff').textContent    = '$' + each;
+      document.getElementById('pay-ben').textContent     = '$' + each;
+      document.getElementById('pay-eli').textContent     = '$' + each;
+
     } catch(e) {
-      // fall back to tiers-collection estimate
-      const monthly = basicCount * 1 + proCount * 3;
-      document.getElementById('revenue').textContent = '$' + monthly;
+      // Stripe failed — fall back to Firebase tier counts
+      const mrr           = basicCount * 1 + proCount * 3;
+      const distributable = Math.max(0, mrr * 0.9 - 1);
+      const each          = (distributable / 3).toFixed(2);
+      document.getElementById('pay-mrr').textContent     = '$' + mrr.toFixed(2);
+      document.getElementById('pay-company').textContent = '$' + (mrr * 0.1).toFixed(2);
+      document.getElementById('pay-raff').textContent    = '$' + each;
+      document.getElementById('pay-ben').textContent     = '$' + each;
+      document.getElementById('pay-eli').textContent     = '$' + each;
+      document.getElementById('revenue').textContent     = '$' + mrr;
     }
 
     // Swipes — sum count field across all popularMovies
@@ -653,24 +672,11 @@ async function loadStats() {
         renderFeed(items);
       }
     } catch(e) {
-      // fall back to placeholder feed
       renderFeed([
         { type:'>>', red:false, text:'<strong>pineapplevr</strong> swiped movies', time:'—' },
         { type:'>>',  red:false, text:'<strong>raff</strong> checked watchlist',   time:'—' },
       ]);
     }
-
-    // Payout calculation using MRR
-    const mrr         = basicCount * 1 + proCount * 3;
-    const afterCo     = mrr * 0.9;
-    const distributable = Math.max(0, afterCo - 1);
-    const each        = (distributable / 3).toFixed(2);
-    const cocut       = (mrr * 0.1).toFixed(2);
-    document.getElementById('pay-mrr').textContent     = '$' + mrr.toFixed(2);
-    document.getElementById('pay-company').textContent = '$' + cocut;
-    document.getElementById('pay-raff').textContent    = '$' + each;
-    document.getElementById('pay-ben').textContent     = '$' + each;
-    document.getElementById('pay-eli').textContent     = '$' + each;
 
     // Update last-refreshed time
     const now = new Date().toLocaleTimeString('en-US', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
