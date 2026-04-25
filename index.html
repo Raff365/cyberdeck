@@ -573,9 +573,25 @@ async function loadStats() {
     const freeCount = Math.max(0, totalUsers - basicCount - proCount);
     setTierBars(freeCount, basicCount, proCount);
 
-    // Revenue (monthly)
-    const monthly = basicCount * 1 + proCount * 3;
-    document.getElementById('revenue').textContent = '$' + monthly;
+    // Revenue — pull real numbers from Stripe via the stats endpoint
+    try {
+      const stripeRes  = await fetch('https://cinolo-stripe.raff365.workers.dev/stats?token=raffdash');
+      const stripeData = await stripeRes.json();
+      if (stripeData.totalRevenue) {
+        document.getElementById('revenue').textContent = '$' + parseFloat(stripeData.totalRevenue).toFixed(0);
+      }
+      if (stripeData.basicCount !== undefined) {
+        setTierBars(
+          Math.max(0, totalUsers - stripeData.basicCount - stripeData.proCount),
+          stripeData.basicCount,
+          stripeData.proCount
+        );
+      }
+    } catch(e) {
+      // fall back to tiers-collection estimate
+      const monthly = basicCount * 1 + proCount * 3;
+      document.getElementById('revenue').textContent = '$' + monthly;
+    }
 
     // Swipes — sum count field across all popularMovies
     const moviesSnap = await db.collection('popularMovies').get();
