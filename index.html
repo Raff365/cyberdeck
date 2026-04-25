@@ -374,9 +374,9 @@ body::after {
 
     <!-- Revenue -->
     <div class="panel">
-      <div class="panel-label">// revenue total</div>
+      <div class="panel-label">// monthly revenue</div>
       <div class="panel-value" style="font-size:42px;" id="revenue">$142</div>
-      <div class="panel-sub"><span class="hi">$38</span> this month</div>
+      <div class="panel-sub"><span class="hi" id="revenue-sub">from active subs</span></div>
     </div>
 
     <!-- Active Now -->
@@ -611,10 +611,8 @@ async function loadStats() {
       const stripeRes  = await fetch('https://cinolo-stripe.raffattack911.workers.dev/stats?token=raffdash');
       const stripeData = await stripeRes.json();
 
-      // Total revenue
-      if (stripeData.totalRevenue) {
-        document.getElementById('revenue').textContent = '$' + parseFloat(stripeData.totalRevenue).toFixed(0);
-      }
+      // Monthly revenue (MRR)
+      document.getElementById('revenue').textContent = '$' + (sBasic * 1 + sPro * 3).toFixed(0);
 
       // Tier bars from Stripe (accurate)
       const sBasic = stripeData.basicCount || 0;
