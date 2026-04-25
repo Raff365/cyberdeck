@@ -755,6 +755,43 @@ async function loadStats() {
 loadStats();
 setInterval(loadStats, 30000);
 
+// ── WALLPAPER SLIDESHOW ──
+(async () => {
+  let imgs = [];
+  try {
+    // Fetch directory listing from the Python HTTP server
+    const res = await fetch('/wallpapers/');
+    const html = await res.text();
+    const matches = [...html.matchAll(/href="(pinterest_[^"]+\.(jpg|png))"/gi)];
+    imgs = matches.map(m => '/wallpapers/' + m[1]);
+  } catch(e) {}
+
+  if (!imgs.length) return; // no images found, keep existing background
+
+  let idx = Math.floor(Math.random() * imgs.length);
+  const stars = document.getElementById('stars');
+
+  function applyBg() {
+    const url = imgs[idx];
+    stars.style.transition = 'opacity 1.5s ease';
+    stars.style.opacity = '0';
+    setTimeout(() => {
+      stars.style.backgroundImage = `url('${url}')`;
+      stars.style.backgroundSize = 'cover';
+      stars.style.backgroundPosition = 'center';
+      stars.style.backgroundBlendMode = 'luminosity';
+      stars.style.opacity = '0.22';
+      // keep the starfield dots on top via ::before pseudo — use filter instead
+      stars.style.filter = 'saturate(0.6) brightness(0.55)';
+      stars.style.opacity = '1';
+    }, 800);
+    idx = (idx + 1) % imgs.length;
+  }
+
+  applyBg();
+  setInterval(applyBg, 25000); // rotate every 25 seconds
+})();
+
 // ── ACTIVE NOW ──
 let activeVal = 1;
 setInterval(() => {
