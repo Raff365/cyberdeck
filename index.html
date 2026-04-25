@@ -419,6 +419,7 @@ body::after {
   <!-- FOOTER -->
   <div class="footer">
     <div>CINOLO RAFF NET v2.3 // BUILT STL // RAFF@CYBERDECK</div>
+    <div id="last-refresh" style="color:var(--dim);font-size:9px;letter-spacing:2px;">SYNCING...</div>
     <div class="clock" id="clock">--:--:-- --</div>
   </div>
 
@@ -627,14 +628,19 @@ async function loadStats() {
       ]);
     }
 
-    // Refresh every 60s
-    setTimeout(loadStats, 60000);
+    // Update last-refreshed time
+    const now = new Date().toLocaleTimeString('en-US', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    document.getElementById('last-refresh').textContent = 'LAST SYNC: ' + now;
 
   } catch(e) {
     console.warn('Stats load error:', e.message);
-    setTimeout(loadStats, 15000);
+    document.getElementById('last-refresh').textContent = 'SYNC ERROR — RETRYING...';
   }
 }
+
+// Auto-refresh every 30s
+loadStats();
+setInterval(loadStats, 30000);
 
 // ── ACTIVE NOW — fluctuate while real data loads ──
 let activeVal = 1;
@@ -642,6 +648,8 @@ setInterval(() => {
   activeVal = Math.max(1, activeVal + Math.floor(Math.random()*3) - 1);
   document.getElementById('active-now').textContent = activeVal;
 }, 6000);
+
+// remove old standalone loadStats call — handled by setInterval above
 </script>
 
 <!-- Cinolo app icon pixelated -->
