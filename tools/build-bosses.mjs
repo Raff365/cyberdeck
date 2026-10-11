@@ -40,16 +40,17 @@ const MAT = {
   // 0 procrastinator
   slime:     { base: '#9d93c2', spec: 0.55, pow: 16, rim: '#d8d0ff', amb: 0.36 },
   slimeLid:  { base: '#857bae', spec: 0.45, pow: 14, rim: '#cfc4ff', amb: 0.36 },
+  slimeMd:   { base: '#7d72a6', spec: 0.25, pow: 12, rim: '#c4b8f6', amb: 0.36 },
   slimeDk:   { base: '#62598a', spec: 0.40, pow: 14, rim: '#b3a6ee', amb: 0.36 },
   socketLav: { base: '#1f1934', spec: 0.10, pow: 6,  rim: '#4c4277', amb: 0.50 },
   mouthLav:  { base: '#2a1d3c', spec: 0.10, pow: 6,  rim: '#5a3f78', amb: 0.50 },
-  tongue:    { base: '#ff7aa6', spec: 0.60, pow: 16, rim: '#ffd0e0', amb: 0.40 },
-  drool:     { base: '#cdeaff', spec: 0.90, pow: 20, rim: '#ffffff', amb: 0.55 },
+  tongue:    { base: '#ff7aa6', spec: 0.25, pow: 16, rim: '#ffd0e0', amb: 0.40 },
+  drool:     { base: '#bfe4ff', spec: 0.60, pow: 12, rim: '#ffffff', amb: 0.50 },
   eyeYel:    { base: '#ffd23c', spec: 0.50, pow: 6,  rim: '#fff7c8', amb: 0.92 },
   // 1 hydra
   scale:     { base: '#1fb38a', spec: 0.50, pow: 18, rim: '#a8ffe2', amb: 0.36 },
   scaleDk:   { base: '#137258', spec: 0.40, pow: 14, rim: '#86f0cf', amb: 0.36 },
-  belly:     { base: '#b9ec7c', spec: 0.45, pow: 16, rim: '#f0ffd0', amb: 0.38 },
+  belly:     { base: '#a8e48a', spec: 0.45, pow: 16, rim: '#f0ffd0', amb: 0.38 },
   horn:      { base: '#dff3e6', spec: 0.60, pow: 20, rim: '#ffffff', amb: 0.40 },
   fang:      { base: '#f7f4ea', spec: 0.70, pow: 20, rim: '#ffffff', amb: 0.50 },
   mouthRed:  { base: '#3d0c25', spec: 0.10, pow: 6,  rim: '#7a2048', amb: 0.50 },
@@ -58,6 +59,7 @@ const MAT = {
   eyeCyan:   { base: '#3cf0ff', spec: 0.50, pow: 6,  rim: '#e6ffff', amb: 0.92 },
   // 2 golem
   candy:     { base: '#ff3fa4', spec: 0.80, pow: 26, rim: '#ffd0ec', amb: 0.38 },
+  candyMd:   { base: '#d81f86', spec: 0.70, pow: 22, rim: '#ffb0dc', amb: 0.36 },
   candyDk:   { base: '#b3136c', spec: 0.60, pow: 20, rim: '#ff9ad2', amb: 0.36 },
   candyWh:   { base: '#fff0f7', spec: 0.70, pow: 22, rim: '#ffffff', amb: 0.50 },
   candyRed:  { base: '#ff2d55', spec: 0.80, pow: 24, rim: '#ffc8d4', amb: 0.40 },
@@ -76,7 +78,9 @@ const MAT = {
   // 4 kraken
   kraken:    { base: '#f2522c', spec: 0.55, pow: 18, rim: '#ffc4a0', amb: 0.36 },
   krakenDk:  { base: '#a82818', spec: 0.45, pow: 14, rim: '#ff9a78', amb: 0.36 },
-  krSpot:    { base: '#ff9a52', spec: 0.50, pow: 16, rim: '#ffe0c0', amb: 0.40 },
+  krSpot:    { base: '#ff8a48', spec: 0.15, pow: 8,  rim: '#ffd0b0', amb: 0.40 },
+  remote:    { base: '#3b3f52', spec: 0.50, pow: 18, rim: '#9aa4d0', amb: 0.40 },
+  button:    { base: '#c9cede', spec: 0.50, pow: 16, rim: '#ffffff', amb: 0.50 },
   sucker:    { base: '#ffc79e', spec: 0.50, pow: 16, rim: '#fff0e0', amb: 0.45 },
   brow:      { base: '#6e1810', spec: 0.30, pow: 10, rim: '#d05a40', amb: 0.40 },
   socketRd:  { base: '#2a0806', spec: 0.10, pow: 6,  rim: '#6a2010', amb: 0.50 },
@@ -177,10 +181,14 @@ function part(outline, mat, { bevel = 5, depth = 6, apex = 10, apexAt, plateau =
 // Rounded volume: rings scale toward a centre (and may drift, so the crown of the dome sits
 // where the form is fullest); stays valid for any outline that is star-shaped about the centre.
 // rings: [[scale, height, dx, dy], ...] outer to inner; then a fan to the apex.
-function dome(outline, mat, { c, rings = [[0.78, 10], [0.45, 17]], apex = 20, apexAt } = {}) {
+// edge: [inset, height] adds a crest-style mitered bevel ring first, so thin lobes (drips) keep a
+// constant bevel; core: a calmer outline with the same vertex count that the inner rings scale
+// from instead, so those lobes don't streak spokes across the whole dome.
+function dome(outline, mat, { c, rings = [[0.78, 10], [0.45, 17]], apex = 20, apexAt, edge, core } = {}) {
   c = c || centroid(outline);
-  const tris = [], R = [z(outline, 0)];
-  for (const [s, h, dx = 0, dy = 0] of rings) R.push(outline.map(([x, y]) => [c[0] + (x - c[0]) * s + dx, c[1] + (y - c[1]) * s + dy, h]));
+  const tris = [], R = [z(outline, 0)], src = core || outline;
+  if (edge) R.push(z(inset(outline, edge[0]), edge[1]));
+  for (const [s, h, dx = 0, dy = 0] of rings) R.push(src.map(([x, y]) => [c[0] + (x - c[0]) * s + dx, c[1] + (y - c[1]) * s + dy, h]));
   for (let k = 0; k < R.length - 1; k++) band(R[k], R[k + 1], tris);
   const last = rings.length ? rings[rings.length - 1] : [1, 0, 0, 0];
   const A = apexAt || [c[0] + (last[2] || 0), c[1] + (last[3] || 0)];
@@ -207,13 +215,15 @@ function tube(spine, widths, mat, { lift = 0.9, shape = 'flat', shoulder = 0.45,
   }
   return out;
 }
+// a recess seen straight on is one flat colour: emit the polygon whole
+const flat = (outline, mat) => [{ pts: outline, fill: shade(MAT[mat], [0, 0, 1]) }];
 // flat faceted halo (low opacity polygon, no shading) for glows
 const halo = (outline, col, op, s, c = centroid(outline)) => ({ pts: outline.map(([x, y]) => [c[0] + (x - c[0]) * s, c[1] + (y - c[1]) * s]), fill: col, op });
 // An emissive eye: two soft halo rings, a dark socket, then a gem-cut glowing eye.
 function eye(outline, mat, { socket, sock = 1.35, glow = [2.1, 1.55], ops = [0.13, 0.2], table = 2, bevel = 1.6, depth = 2, apex = 2.5 } = {}) {
   const col = MAT[mat].base, c = centroid(outline), out = [];
   glow.forEach((s, i) => out.push(halo(outline, col, ops[i], s, c)));
-  if (socket) out.push(...part(outline.map(([x, y]) => [c[0] + (x - c[0]) * sock, c[1] + (y - c[1]) * sock]), socket, { bevel: 1.5, depth: 1, plateau: 'flat' }));
+  if (socket) out.push(...flat(outline.map(([x, y]) => [c[0] + (x - c[0]) * sock, c[1] + (y - c[1]) * sock]), socket));
   out.push(...part(outline, mat, { bevel, depth, apex, table }));
   return out;
 }
@@ -221,38 +231,42 @@ function eye(outline, mat, { socket, sock = 1.35, glow = [2.1, 1.55], ops = [0.1
 // ------------------------------------------------------------------ 0 THE PROCRASTINATOR
 function procrastinator() {
   const out = [];
-  // puddle it is melting into
-  const pud = ellipse(100, 172, 90, 13, 18).map(([x, y], i) => i % 2 ? [x, y + 1.5] : [x, y]);
-  out.push(...dome(pud, 'slimeDk', { rings: [[0.7, 3]], apex: 4 }));
-  // the blob: narrow lazy head, belly sagging out over the puddle
-  const body = smooth(sym([[100, 44], [126, 48], [145, 61], [157, 82], [162, 106], [167, 128], [176, 148], [186, 164], [166, 174], [130, 176], [100, 177]]), 1);
-  out.push(...dome(body, 'slime', { c: [100, 118], rings: [[0.84, 16, 0, -2], [0.56, 30, 0, -9], [0.26, 37, 0, -14]], apex: 39 }));
-  // drips running down over the lower edge into the puddle
-  const drip = (x, y0, y1, w) => [[x, y0 - w], [x + w * 0.8, y0], [x + w * 0.85, y0 + (y1 - y0) * 0.5], [x + w * 1.2, y1 - w * 1.2], [x + w * 0.85, y1 - w * 0.2], [x, y1], [x - w * 0.85, y1 - w * 0.2], [x - w * 1.2, y1 - w * 1.2], [x - w * 0.85, y0 + (y1 - y0) * 0.5], [x - w * 0.8, y0]];
-  for (const [x, y0, y1, w] of [[54, 146, 184, 6.5], [146, 150, 190, 7.5], [168, 156, 180, 5]]) {
-    out.push(...part(drip(x, y0, y1, w), 'slime', { bevel: 2.4, depth: 3, apex: 3, apexAt: [x - w * 0.2, y1 - w * 1.4] }));
-  }
+  // the blob: narrow lazy head, belly sagging wide, goo running off the hem in uneven drips
+  // (part of the silhouette, each necking in then swelling to a drop, so it reads as melting
+  // even at icon size) and a couple of drops already falling
+  const lobe = (x, w, L, yh) => [[x + w, yh], [x + w * 0.62, yh + L * 0.42], [x + w * 0.98, yh + L * 0.72], [x + w * 0.62, yh + L * 0.95], [x, yh + L + w * 0.15], [x - w * 0.62, yh + L * 0.95], [x - w * 0.98, yh + L * 0.72], [x - w * 0.62, yh + L * 0.42], [x - w, yh]];
+  const bump = (x, w, L, yh) => [[x + w, yh], [x + w * 0.75, yh + L * 0.7], [x, yh + L], [x - w * 0.75, yh + L * 0.7], [x - w, yh]];
+  const right = [[128, 56], [148, 68], [160, 88], [166, 110], [172, 130], [181, 148], [190, 161], [187, 171]];
+  const body = [
+    [100, 52], ...right, [176, 176],
+    ...bump(160, 8, 7, 177), [143, 178], ...lobe(126, 10.5, 30, 179), [106, 179],
+    ...bump(88, 8, 7, 179), [72, 178], ...lobe(55, 9, 20, 177),
+    [24, 176], ...right.map(mirrorPt).reverse(),
+  ];
+  const core = body.map(([x, y]) => [x, Math.min(y, 179)]);
+  out.push(...dome(body, 'slime', { c: [100, 124], edge: [4.5, 9], core, rings: [[0.82, 18, 0, -2], [0.56, 30, 0, -9], [0.26, 37, 0, -14]], apex: 39 }));
+  const drop = (x, y, r) => [[x, y - r * 1.9], [x + r * 0.55, y - r * 0.9], [x + r, y], [x + r * 0.7, y + r * 0.75], [x, y + r], [x - r * 0.7, y + r * 0.75], [x - r, y]].concat([[x - r * 0.55, y - r * 0.9]]);
+  for (const [x, y, r] of [[126, 226, 6], [55, 212, 4.5]]) out.push(...dome(drop(x, y, r), 'slime', { c: [x, y], rings: [[0.5, 3, -r * 0.2, -r * 0.3]], apex: 4 }));
   // heavy-lidded eyes: glowing slit under a drooping lid (lid line slopes down to the outside)
   for (const side of [1, -1]) {
-    const cx = 100 + side * 25, cy = 98;
+    const cx = 100 + side * 26, cy = 103;
     const lidA = [cx - side * 20, cy - 3], lidB = [cx + side * 20, cy + 4];
     const [a, b] = side > 0 ? [lidB, lidA] : [lidA, lidB];       // keep the side below the lid line
-    const sock = ellipse(cx, cy, 18, 15, 12);
-    out.push(...part(sock, 'socketLav', { bevel: 2, depth: 1.5, plateau: 'flat' }));
+    out.push(...part(ellipse(cx, cy, 18, 15, 12), 'socketLav', { bevel: 2, depth: 1.5, plateau: 'flat' }));
     const iris = clip(ellipse(cx, cy, 14.5, 12, 14), [a[0], a[1] - 0.5], [b[0], b[1] - 0.5]);
-    const col = MAT.eyeYel.base;
-    out.push(halo(iris, col, 0.14, 2.0, [cx, cy + 4]), halo(iris, col, 0.22, 1.5, [cx, cy + 4]));
+    out.push(halo(iris, MAT.eyeYel.base, 0.16, 1.45, [cx, cy + 4]));
     out.push(...part(iris, 'eyeYel', { bevel: 1.6, depth: 2, apex: 2.5, table: 2 }));
     const lid = clip(ellipse(cx, cy - 0.5, 19.5, 16.5, 14), b, a);
     out.push(...part(lid, 'slimeLid', { bevel: 3, depth: 4, apex: 5, apexAt: [cx - side * 2, cy - 9] }));
   }
-  // lazy open mouth, tongue lolling, drool
-  const mouth = [[74, 130], [88, 132], [100, 133], [112, 132], [126, 129], [122, 138], [111, 143], [100, 144], [89, 143], [79, 139]];
+  // lazy open mouth, tongue lolling out of one corner, a drool drop on the other
+  const mouth = [[74, 135], [88, 137], [100, 138], [112, 137], [126, 134], [122, 143], [111, 148], [100, 149], [89, 148], [79, 144]].map(([x, y]) => [x, y]);
   out.push(...part(mouth, 'mouthLav', { bevel: 1.8, depth: 1, plateau: 'flat' }));
-  out.push(...dome(ellipse(110, 143, 10, 6.5, 10), 'tongue', { rings: [[0.6, 3]], apex: 4.5 }));
-  out.push(...part([[77, 136], [81, 137], [80, 148], [82.5, 154], [78.5, 158], [74.5, 154], [76.5, 148]], 'drool', { bevel: 1, depth: 1.5, apex: 1.5, apexAt: [78, 153] }));
+  out.push(...dome(smooth([[102, 144], [118, 142], [121, 152], [116, 160], [109, 162], [103, 156]], 2), 'tongue', { rings: [[0.6, 3, -1, -1]], apex: 4.5 }));
+  out.push(...tube([[78, 141], [78.6, 148], [79, 154]], [1.6, 1.3, 1.5], 'drool', { lift: 0.8, shape: 'ridge' }));
+  out.push(...dome(ellipse(79, 157.5, 3.6, 4, 8), 'drool', { rings: [[0.5, 2, -0.8, -1]], apex: 3 }));
   // tiny crown sliding off to one side
-  const at = p => place(p, [83, 48], -22);
+  const at = p => place(p, [84, 57], -22);
   for (const [x, h] of [[-10, 17], [0, 21], [10, 17]]) out.push(...part(at([[x - 5, -5], [x, -h], [x + 5, -5]]), 'gold', { bevel: 1.4, depth: 2, apex: 2 }));
   out.push(...part(at([[-14, 0], [14, 0], [14, -7.5], [-14, -7.5]]), 'goldDk', { bevel: 1.6, depth: 2, plateau: 'flat' }));
   for (const [x, y] of [[-10, -17], [0, -21], [10, -17]]) out.push(...part(at(ellipse(x, y, 2.6, 2.6, 4)), 'ruby', { bevel: 0.9, depth: 1, apex: 1.2 }));
@@ -262,7 +276,7 @@ function procrastinator() {
 
 // ------------------------------------------------------------------ 1 DOOMSCROLL HYDRA
 // one serpent head in local units (origin between the eyes, +y down), placed by place()
-function serpentHead(at, { tongue = false } = {}) {
+function serpentHead(at, { tongue = false, cut = 1.6 } = {}) {
   const out = [], P = p => at(p);
   // swept-back horns
   for (const s of [1, -1]) {
@@ -281,11 +295,11 @@ function serpentHead(at, { tongue = false } = {}) {
   const head = sym([[0, -30], [15, -28], [26, -18], [30, -6], [26, 5], [17, 13], [7, 15.5], [0, 16]].map(([x, y]) => [x + 100, y])).map(([x, y]) => [x - 100, y]);
   out.push(...dome(P(head), 'scale', { c: P([[0, -4]])[0], rings: [[0.66, 9]], apex: 13 }));
   // nostrils
-  for (const s of [1, -1]) out.push(...part(P([[s * 3, 9], [s * 7, 7.5], [s * 6, 10.5]]), 'socketTl', { bevel: 0.5, depth: 0.5, plateau: 'flat' }));
+  for (const s of [1, -1]) out.push(...flat(P([[s * 3, 9], [s * 7, 7.5], [s * 6, 10.5]]), 'socketTl'));
   // slanted eyes under hard brows
   for (const s of [1, -1]) {
     const e = P([[5, -4], [12, -6], [21, -11], [20, -4], [14, 1], [7, 0.5]].map(([x, y]) => [s * x, y]));
-    out.push(...eye(s > 0 ? e : e.reverse(), 'eyeCyan', { socket: 'socketTl', sock: 1.3, glow: [2.2, 1.6], ops: [0.14, 0.22], table: 1.6, bevel: 1.2, depth: 1.5, apex: 2 }));
+    out.push(...eye(s > 0 ? e : e.reverse(), 'eyeCyan', { socket: 'socketTl', sock: 1.3, glow: [2.2, 1.6], ops: [0.14, 0.22], table: cut, bevel: 1.2, depth: 1.5, apex: 2 }));
     const br = P([[3, -9], [22, -17], [25, -13], [5, -5.5]].map(([x, y]) => [s * x, y]));
     out.push(...part(br, 'scaleDk', { bevel: 1.4, depth: 2.5, apex: 2.5 }));
   }
@@ -302,13 +316,13 @@ function hydra() {
     for (let i = 1; i < spine.length - 1; i++) {
       const p = spine[i], q = spine[i + 1], l = Math.hypot(q[0] - p[0], q[1] - p[1]), d = [(q[0] - p[0]) / l, (q[1] - p[1]) / l], n = [-d[1], d[0]];
       const w = ws[i] * 0.55, L = l * 0.42, at = (a, b) => [p[0] + n[0] * a + d[0] * b, p[1] + n[1] * a + d[1] * b];
-      o.push(...part([at(-w, -L), at(0, -L + 3), at(w, -L), at(w, L), at(0, L + 3), at(-w, L)], 'belly', { bevel: 1.2, depth: 1.5, apex: 1.5 }));
+      o.push(...dome([at(-w, -L), at(0, -L + 3), at(w, -L), at(w, L), at(0, L + 3), at(-w, L)], 'belly', { rings: [], apex: 3 }));
     }
     return o;
   };
   const side = bez([[116, 180], [150, 156], [158, 112]], 7);
   out.push(...neck(side, 14, 10), ...neck(side.map(mirrorPt), 14, 10));
-  out.push(...serpentHead(p => place(p, [158, 96], 16, 0.8)), ...serpentHead(p => place(p, [42, 96], -16, 0.8)));
+  out.push(...serpentHead(p => place(p, [158, 96], 16, 0.8), { cut: 0 }), ...serpentHead(p => place(p, [42, 96], -16, 0.8), { cut: 0 }));
   out.push(...neck(bez([[100, 186], [100, 140], [100, 92]], 7), 17, 12.5));
   out.push(...serpentHead(p => place(p, [100, 66], 0, 1.1), { tongue: true }));
   return out;
@@ -338,8 +352,8 @@ function golem() {
   // shoulders with crystal growths and peppermint studs
   for (const s of [1, -1]) {
     const S = pts => s > 0 ? pts : mirrorX(pts);
-    out.push(...crystal(100 + s * 52, 112, s * 22, 30, 6.5, 'candyWh'), ...crystal(100 + s * 76, 124, s * 50, 24, 6, 'candy'));
-    out.push(...part(S([[126, 114], [158, 102], [184, 116], [194, 142], [186, 170], [156, 184], [132, 176], [122, 146]]), 'candy', { bevel: 7, depth: 8, apex: 10, apexAt: [100 + s * 60, 136] }));
+    out.push(...crystal(100 + s * 56, 110, s * 16, 32, 7, 'candyWh'), ...crystal(100 + s * 76, 118, s * 34, 24, 6, 'candy'));
+    out.push(...part(S([[126, 114], [158, 102], [184, 116], [194, 142], [186, 170], [156, 184], [132, 176], [122, 146]]), 'candyMd', { bevel: 7, depth: 8, apex: 10, apexAt: [100 + s * 60, 136] }));
     out.push(...peppermint(100 + s * 60, 144, 15));
   }
   // head: brow block, boxy jaw
@@ -395,8 +409,8 @@ function wraith() {
   out.push(...part(open, 'voidInk', { bevel: 3, depth: 1, plateau: 'flat' }));
   // two glowing eyes in the dark, sleepy but cross
   for (const s of [1, -1]) {
-    const e = [[104, 82], [113, 80], [123, 77], [122, 85], [115, 90], [107, 88]];
-    out.push(...eye(s > 0 ? e : mirrorX(e), 'eyeWht', { glow: [2.3, 1.6], ops: [0.12, 0.2], table: 1.8, bevel: 1.4, depth: 2, apex: 2.5 }));
+    const e = [[107, 80], [114, 78], [122, 74], [123, 82], [118, 89], [110, 88]];
+    out.push(...eye(s > 0 ? e : mirrorX(e), 'eyeWht', { glow: [1.75, 1.35], ops: [0.12, 0.2], table: 1.8, bevel: 1.4, depth: 2, apex: 2.5 }));
   }
   // and one big Z right next to it
   out.push(...zee(152, 50, 24, -8));
@@ -433,6 +447,11 @@ function kraken() {
     [[124, 110], -40, 92, 250, 13],    // middle: down-right, curls up
     [[110, 116], -78, 74, 210, 12],    // inner: down, curls outward
   ];
+  // the couch-potato prop: a TV remote, clutched in the right outer curl (the one asymmetry)
+  const R = p => place(p, [166, 56], 24);
+  out.push(...part(R([[-7, -16], [7, -16], [7, 16], [-7, 16]]), 'remote', { bevel: 2, depth: 3, plateau: 'flat' }));
+  out.push(...part(R(ellipse(0, -10, 3, 3, 6)), 'ruby', { bevel: 1, depth: 1, apex: 1.5 }));
+  for (const [x, y] of [[-2.6, -3], [2.6, -3], [-2.6, 2], [2.6, 2]]) out.push(...part(R([[x - 1.8, y - 1.6], [x + 1.8, y - 1.6], [x + 1.8, y + 1.6], [x - 1.8, y + 1.6]]), 'button', { bevel: 0.6, depth: 0.8, plateau: 'flat' }));
   for (const [p0, a0, len, turn, w] of T) {
     const sp = curl(p0, a0, len, turn);
     out.push(...tentacle(sp.map(mirrorPt), w), ...tentacle(sp, w));
@@ -440,11 +459,11 @@ function kraken() {
   // big dome mantle
   const head = smooth(sym([[100, 14], [128, 18], [148, 32], [159, 54], [160, 80], [152, 102], [134, 116], [100, 124]]), 1);
   out.push(...dome(head, 'kraken', { c: [100, 74], rings: [[0.84, 14, 0, -4], [0.56, 27, 0, -12], [0.26, 33, 0, -17]], apex: 35 }));
-  for (const [x, y, r] of [[78, 34, 6], [122, 34, 6], [60, 60, 4.5], [140, 60, 4.5], [100, 24, 4]]) out.push(...dome(ellipse(x, y, r, r * 0.85, 6), 'krSpot', { rings: [], apex: 2 }));
+  for (const [x, y, r] of [[78, 34, 7], [122, 34, 7], [59, 62, 5], [141, 62, 5], [100, 24, 4.5]]) out.push(...dome(ellipse(x, y, r, r * 0.8, 7), 'krSpot', { rings: [], apex: 1 }));
   // big angry eyes
   for (const s of [1, -1]) {
     const e = [[106, 72], [120, 74], [134, 66], [138, 76], [132, 88], [118, 92], [108, 86]];
-    out.push(...eye(s > 0 ? e : mirrorX(e), 'eyeGrn', { socket: 'socketRd', sock: 1.25, table: 2.6, bevel: 2, depth: 2.5, apex: 3 }));
+    out.push(...eye(s > 0 ? e : mirrorX(e), 'eyeGrn', { socket: 'socketRd', sock: 1.25, glow: [], table: 2.6, bevel: 2, depth: 2.5, apex: 3 }));
     const br = [[102, 66], [136, 52], [142, 60], [106, 76]];
     out.push(...part(s > 0 ? br : mirrorX(br), 'brow', { bevel: 2.4, depth: 3.5, apex: 4 }));
   }
@@ -462,7 +481,8 @@ const BOSSES = [
 ];
 
 // ------------------------------------------------------------------ emit
-const f = v => +v.toFixed(1);
+// coordinates are written on a x10 integer grid (0.1 unit precision, no decimal points)
+const f = v => Math.round(v * 10);
 const d = pts => 'M' + pts.map(p => f(p[0]) + ' ' + f(p[1])).join('L') + 'Z';
 function svg(items) {
   // fit the art: bounds of the solid facets (halos may bleed), square, padded
@@ -479,7 +499,7 @@ function svg(items) {
     flush(); run = { d: d(t.pts), fill: t.fill, op: t.op };
   }
   flush();
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}"><g stroke-width=".35" stroke-linejoin="round">${body}</g></svg>\n`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}"><g stroke-width="3.5" stroke-linejoin="round">${body}</g></svg>\n`;
 }
 for (const [i, b] of BOSSES.entries()) {
   const out = new URL(`boss-${i}-${b.id}.svg`, OUT);
