@@ -1,0 +1,6 @@
+# Android build output and the copied web assets (android/sync-web.sh regenerates them)
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/app/src/main/assets/www/

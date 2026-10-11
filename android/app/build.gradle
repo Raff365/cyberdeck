@@ -1,0 +1,44 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'app.levelup'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'app.levelup'
+        minSdk 24
+        targetSdk 34
+        // CI passes the run number so every build installs over the previous one
+        versionCode((project.findProperty('versionCode') ?: '1') as int)
+        versionName "1.0.${versionCode}"
+    }
+
+    // A fixed key so each new APK updates the installed app (and keeps its data) instead of
+    // clashing with it. This is a sideloaded hobby app; the key is public on purpose.
+    signingConfigs {
+        release {
+            storeFile rootProject.file('levelup.keystore')
+            storePassword 'levelup-public'
+            keyAlias 'levelup'
+            keyPassword 'levelup-public'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.11.0'
+}

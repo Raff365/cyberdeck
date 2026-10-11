@@ -1,0 +1,73 @@
+# Builds the LEVEL UP Android app and publishes the APK as a GitHub release you can download on a phone.
+name: Android APK
+
+on:
+  push:
+    branches: [main, 'ccr-*']
+    paths:
+      - 'index.html'
+      - 'app.js'
+      - 'body-data.js'
+      - 'manifest.webmanifest'
+      - 'icons/**'
+      - 'fonts/**'
+      - 'ranks/**'
+      - 'android/**'
+      - '.github/workflows/android-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # to publish the release
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Copy the web app into the Android project
+        run: ./android/sync-web.sh
+
+      - name: Build the signed APK
+        working-directory: android
+        run: gradle assembleRelease -PversionCode=${{ github.run_number }} --stacktrace
+
+      - name: Name the APK
+        run: cp android/app/build/outputs/apk/release/app-release.apk LevelUp.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LevelUp-apk
+          path: LevelUp.apk
+
+      - name: Publish a release with the APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="apk-${{ github.run_number }}"
+          cat > notes.md <<'NOTES'
+          **Install on Android**
+          1. Tap **LevelUp.apk** below to download it.
+          2. Open the download. If Android asks, allow installs from your browser ("Install unknown apps").
+          3. Tap **Install**, then open **LEVEL UP** from your home screen.
+
+          Installing a newer build over an older one keeps your habits and progress.
+          NOTES
+          gh release create "$tag" LevelUp.apk \
+            --target "${{ github.sha }}" \
+            --title "LEVEL UP for Android (build ${{ github.run_number }})" \
+            --notes-file notes.md \
+            --latest

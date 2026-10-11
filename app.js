@@ -308,6 +308,7 @@ $('quitReset').onclick = () => {
 };
 $('quitEdit').onclick = () => quitSheet();
 $('export').onclick = () => {
+  if (window.LevelUpAndroid) { LevelUpAndroid.saveBackup(`levelup-${today()}.json`, JSON.stringify(S, null, 1)); return; }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([JSON.stringify(S, null, 1)], { type: 'application/json' }));
   a.download = `levelup-${today()}.json`; document.body.appendChild(a); a.click(); a.remove();
@@ -417,6 +418,13 @@ document.querySelectorAll('.nav button').forEach(b => b.onclick = () => {
   if (b.dataset.v === 'stats') renderStats();
   scrollTo(0, 0);
 });
+// Android back button: returns true when it handled the press (so the app stays open)
+window.levelupBack = () => {
+  if ($('rankup').classList.contains('open')) { $('rankup').classList.remove('open'); return true; }
+  if ($('sheetbg').classList.contains('open')) { closeSheet(); return true; }
+  if (!$('v-home').classList.contains('on')) { document.querySelector('.nav button[data-v=home]').click(); return true; }
+  return false;
+};
 function renderAll() { renderCard(); renderHabits(); renderGoals(); if ($('v-stats').classList.contains('on')) renderStats(); }
 renderBody(); renderAll(); save();
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
@@ -425,4 +433,4 @@ let lastDay = today();
 const rollover = () => { if (today() !== lastDay) { lastDay = today(); renderAll(); return true; } return false; };
 setInterval(() => { if (!rollover() && $('v-stats').classList.contains('on')) renderQuit(); }, 30000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) rollover(); });
-if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+if ('serviceWorker' in navigator && !window.LevelUpAndroid) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
