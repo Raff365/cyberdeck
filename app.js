@@ -5,11 +5,22 @@ const KEY = 'levelup.v1';
 const DAY = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 const DAY_NAME = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const CATS = [['Health', 'HLT'], ['Gym', 'GYM'], ['Mind', 'MND'], ['Work', 'WRK'], ['Social', 'SOC']];
+// each category's hue identifies it (icon tile + stripe) and means nothing else
+const CAT_STYLE = {
+  Health: ['#ff5d7a', 'M12 21s-7.4-4.5-9.4-9.1C1.1 8.4 3.3 5 6.7 5c2 0 3.4 1.1 4.3 2.4C11.9 6.1 13.3 5 15.3 5c3.4 0 5.6 3.4 4.1 6.9C17.4 16.5 12 21 12 21z'],
+  Gym: ['#ffb020', 'M1.5 9.5h2v-2h3v9h-3v-2h-2zM22.5 9.5h-2v-2h-3v9h3v-2h2zM7.5 10.8h9v2.4h-9z'],
+  Mind: ['#7c9cff', 'M2 5.2c3-1.4 6-1.2 9 .8v14.2c-3-1.8-6-2-9-.8zM22 5.2c-3-1.4-6-1.2-9 .8v14.2c3-1.8 6-2 9-.8z'],
+  Work: ['#c38cff', 'M9 3.5h6a1 1 0 011 1V7h4a1 1 0 011 1v11a1 1 0 01-1 1H4a1 1 0 01-1-1V8a1 1 0 011-1h4V4.5a1 1 0 011-1zM10 7h4V5.5h-4z'],
+  Social: ['#4fd1ff', 'M4 4h16a1 1 0 011 1v11a1 1 0 01-1 1h-9l-5 4v-4H4a1 1 0 01-1-1V5a1 1 0 011-1z'],
+};
+const FLAME = '<svg viewBox="0 0 13 16" aria-hidden="true"><path d="M6.5 0C7.4 3.2 13 5.6 13 10.2 13 13.6 10.2 16 6.5 16S0 13.6 0 10.2C0 7.7 1.6 6 2.9 4.9c0 2 .8 3.3 2 3.8C4.6 5.6 5.4 2.6 6.5 0z" fill="currentColor"/></svg>';
 
-// Ranks: 8 tiers x 3 divisions spread over OVR 40-99. Colours match each crest's material.
+// Ranks: 8 tiers x 3 divisions spread over OVR 40-99. [name, glow colour, card material light, dark]
 const TIERS = [
-  ['Iron', '#a3abb6'], ['Bronze', '#d08a52'], ['Silver', '#cfd8e4'], ['Gold', '#f0c04a'],
-  ['Platinum', '#4fd8cb'], ['Diamond', '#8ccaff'], ['Master', '#b48cff'], ['Champion', '#ff5a64'],
+  ['Iron', '#a3abb6', '#4a515c', '#191c22'], ['Bronze', '#e09a5e', '#8a4f26', '#2a140a'],
+  ['Silver', '#d6e0ee', '#7d8899', '#232833'], ['Gold', '#f5c64e', '#a8781c', '#2e1d05'],
+  ['Platinum', '#4fe3d4', '#13827b', '#04211f'], ['Diamond', '#8ccaff', '#2f5fc4', '#0a1636'],
+  ['Master', '#b98cff', '#5b31c4', '#170a3a'], ['Champion', '#ff5a6e', '#b3122f', '#33050f'],
 ];
 const CRESTS = ['iron', 'bronze', 'silver', 'gold', 'platinum', 'diamond', 'master', 'champion'].map((n, i) => `ranks/rank-${i}-${n}.svg`);
 const DIV = ['I', 'II', 'III'], STEPS = TIERS.length * 3, LO = 40, HI = 99, STEP = (HI - LO) / STEPS;
@@ -18,7 +29,7 @@ const DIV = ['I', 'II', 'III'], STEPS = TIERS.length * 3, LO = 40, HI = 99, STEP
 // not flesh). Validated with the dataviz palette checker against the panel (#15181b): monotone
 // lightness, every step visibly apart, dimmest step at 2.64:1. Untrained sits outside the ramp.
 const LEVELS = [
-  ['Untrained', '#3a4048'],
+  ['Untrained', '#3a3566'],
   ['Beginner', '#7a5418'], ['Intermediate', '#9a6a1c'], ['Experienced', '#b98322'],
   ['Advanced', '#d69e2e'], ['Elite', '#edbb45'], ['Champion', '#ffd977'],
 ];
@@ -29,7 +40,7 @@ const GROUP = {
   gluteal: 'Glutes', quadriceps: 'Quads', hamstring: 'Hamstrings', adductors: 'Adductors', calves: 'Calves', tibialis: 'Calves',
 };
 const MUSCLES = ['Chest', 'Shoulders', 'Biceps', 'Triceps', 'Forearms', 'Abs', 'Obliques', 'Traps', 'Upper back', 'Lower back', 'Glutes', 'Quads', 'Hamstrings', 'Adductors', 'Calves'];
-const BODY_FILL = { head: '#2a2f35', hair: '#1f2226', neck: '#262a30', hands: '#2a2f35', feet: '#2a2f35', knees: '#23272c', ankles: '#23272c' };
+const BODY_FILL = { head: '#2a2650', hair: '#1c1938', neck: '#25224a', hands: '#2a2650', feet: '#2a2650', knees: '#221f44', ankles: '#221f44' };
 const VIEWBOX = { front: '39 86 650 1275', back: '759 87 650 1275' };
 
 /* ------------------------------------------------------------------ dates */
@@ -56,6 +67,7 @@ function seed() {
     muscles: {},
     hm: null,
     peakIdx: null,
+    sound: true,
   };
 }
 // One-time carry-over from the first prototype (localStorage key lockin.v1).
@@ -82,6 +94,27 @@ const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const buzz = ms => { try { if (navigator.vibrate && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) navigator.vibrate(ms); } catch (e) {} };
+
+/* ------------------------------------------------------------------ sound (synthesized, no files) */
+const Sound = (() => {
+  let ac = null;
+  const ctx = () => { if (!ac) { const A = window.AudioContext || window.webkitAudioContext; if (A) ac = new A(); } if (ac && ac.state === 'suspended') ac.resume(); return ac; };
+  function note(freq, at, dur, { type = 'triangle', vol = 0.12, to = null } = {}) {
+    const a = ctx(); if (!a) return;
+    const t = a.currentTime + at, o = a.createOscillator(), g = a.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t); if (to) o.frequency.exponentialRampToValueAtTime(to, t + dur);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.012); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(a.destination); o.start(t); o.stop(t + dur + 0.02);
+  }
+  const on = () => S.sound !== false;
+  return {
+    check() { if (!on()) return; note(660, 0, 0.09, { type: 'square', vol: 0.05 }); note(990, 0.07, 0.16, { vol: 0.1 }); },
+    uncheck() { if (!on()) return; note(420, 0, 0.12, { vol: 0.07, to: 300 }); },
+    clear() { if (!on()) return; [523, 659, 784, 1047].forEach((f, i) => note(f, i * 0.09, 0.22, { vol: 0.1 })); },
+    rankUp() { if (!on()) return; [392, 523, 659, 784].forEach((f, i) => note(f, i * 0.11, 0.2, { type: 'square', vol: 0.05 })); note(1047, 0.46, 0.7, { vol: 0.14 }); note(1568, 0.46, 0.7, { vol: 0.06 }); },
+    tap() { if (!on()) return; note(880, 0, 0.05, { type: 'sine', vol: 0.05 }); },
+  };
+})();
 
 /* ------------------------------------------------------------------ scoring */
 const due = (h, d) => h.days.includes(d.getDay()) && ymd(d) >= h.created;
@@ -142,15 +175,19 @@ function rankOf(x) {
 const rankName = idx => `${TIERS[Math.floor(idx / 3)][0]} ${DIV[idx % 3]}`;
 function renderCard() {
   const x = ovrExact(), r = rankOf(x), placing = checkins() === 0;
-  document.documentElement.style.setProperty('--rank', placing ? '#9c988f' : TIERS[r.tier][1]);
+  const tier = TIERS[placing ? 0 : r.tier], root = document.documentElement.style;
+  root.setProperty('--rank', placing ? '#aba5cc' : tier[1]);
+  root.setProperty('--card-a', placing ? '#3a3566' : tier[2]); root.setProperty('--card-b', placing ? '#141130' : tier[3]);
   $('card').classList.toggle('placing', placing);
   $('ovr').textContent = placing ? '?' : Math.floor(x);
   $('rankname').textContent = placing ? 'Unranked' : r.name;
-  $('ring').style.strokeDasharray = `${placing ? 0 : (r.into * 100).toFixed(1)} 100`;
-  $('ring').style.opacity = placing || r.into < 0.005 ? 0 : 1;   // a zero-length round cap would draw a stray dot
+  for (const id of ['ring', 'ringHalo']) {
+    $(id).style.strokeDasharray = `${placing ? 0 : (r.into * 100).toFixed(1)} 100`;
+    $(id).style.opacity = placing || r.into < 0.005 ? 0 : '';   // a zero-length round cap would draw a stray dot
+  }
   $('ranknext').textContent = placing ? 'Check off a habit to start placement' : r.next ? `${Math.max(0.1, r.need).toFixed(1)} OVR to ${r.next}` : 'Top rank';
   $('crest').src = CRESTS[r.tier]; $('crest').alt = placing ? 'Unranked' : `${TIERS[r.tier][0]} crest`;
-  $('who').textContent = S.user; $('who').setAttribute('aria-label', `${S.user}, edit name`);
+  $('who').innerHTML = `<i>${esc((S.user || '?').trim().charAt(0).toUpperCase())}</i>${esc(S.user)}`; $('who').setAttribute('aria-label', `${S.user}, edit name`);
   const ds = dayStreak();
   $('streak').hidden = !ds; $('streakN').textContent = ds; $('streak').setAttribute('aria-label', `${ds} perfect ${ds === 1 ? 'day' : 'days'} in a row`);
   const used = CATS.filter(([c]) => S.habits.some(h => h.cat === c)), conf = confidence();
@@ -168,24 +205,54 @@ function renderCard() {
 function rankUp(r, from) {
   $('rankupImg').src = CRESTS[r.tier]; $('rankupName').textContent = r.name;
   $('rankupFrom').textContent = `${rankName(from)} \u2192 ${r.name}`;
-  $('rankup').classList.add('open'); buzz([20, 40, 60]);
+  $('rankup').classList.add('open'); buzz([20, 40, 60]); Sound.rankUp(); burst(TIERS[r.tier][1]);
   setTimeout(() => $('rankupClose').focus(), 30);
 }
-$('rankupClose').onclick = () => $('rankup').classList.remove('open');
+$('rankupClose').onclick = () => { $('rankup').classList.remove('open'); Sound.tap(); };
+// rank-up confetti: one canvas, a few seconds, then it stops drawing
+function burst(color) {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const c = $('fx'), g = c.getContext('2d'), dpr = devicePixelRatio || 1;
+  c.width = innerWidth * dpr; c.height = innerHeight * dpr;
+  const cols = [color, '#ffffff', '#ffd23f', color];
+  const ps = Array.from({ length: 110 }, (_, i) => {
+    const a = Math.random() * Math.PI * 2, v = (4 + Math.random() * 9) * dpr;
+    return { x: c.width / 2, y: c.height * 0.45, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 4 * dpr, s: (3 + Math.random() * 5) * dpr, r: Math.random() * 6, c: cols[i % cols.length], life: 1 };
+  });
+  let last = performance.now();
+  (function frame(now) {
+    const dt = Math.min(2, (now - last) / 16.7); last = now;
+    g.clearRect(0, 0, c.width, c.height);
+    let alive = 0;
+    for (const p of ps) {
+      if (p.life <= 0) continue; alive++;
+      p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 0.35 * dpr * dt; p.vx *= 0.99; p.life -= 0.012 * dt; p.r += 0.2 * dt;
+      g.save(); g.globalAlpha = Math.max(0, p.life); g.translate(p.x, p.y); g.rotate(p.r); g.fillStyle = p.c; g.fillRect(-p.s, -p.s / 2, p.s * 2, p.s); g.restore();
+    }
+    if (alive && $('rankup').classList.contains('open')) requestAnimationFrame(frame); else g.clearRect(0, 0, c.width, c.height);
+  })(last);
+}
 
-const CHECK = '<svg viewBox="0 0 18 18" aria-hidden="true"><path d="M3 9.5l4 4 8-9" fill="none" stroke="#0f1113" stroke-width="2.6" stroke-linecap="square"/></svg>';
+const CHECK = '<svg viewBox="0 0 18 18" aria-hidden="true"><path d="M3 9.5l4 4 8-9" fill="none" stroke="#0c0a1d" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 let editing = false;
 function renderHabits() {
   const k = today(), now = new Date(), list = S.habits.filter(h => due(h, now));
-  $('todaycount').textContent = list.length ? `${list.filter(h => h.log[k]).length}/${list.length}` : '';
+  const doneN = list.filter(h => h.log[k]).length, clear = list.length > 0 && doneN === list.length;
+  $('todaycount').textContent = list.length ? `${doneN}/${list.length}` : '';
+  $('questtitle').textContent = clear ? 'All quests cleared' : 'Daily quests';
+  $('questtitle').classList.toggle('clear', clear);
+  $('questbar').classList.toggle('clear', clear);
+  $('questbar').innerHTML = list.map((h, i) => `<i class="${i < doneN ? 'on' : ''}"></i>`).join('');
   const off = S.habits.filter(h => !due(h, now));
   const row = (h, isDue) => {
     const on = !!h.log[k], st = streak(h);
     const sched = h.days.length === 7 ? 'Every day' : h.days.map(d => DAY_NAME[d]).join(' ');
     const ctl = editing ? '' : `role="checkbox" aria-checked="${on}" tabindex="0"`;
-    return `<div class="habit ${on ? 'on' : ''} ${isDue ? '' : 'offday'}" data-h="${h.id}" ${ctl}>
+    const [col, icon] = CAT_STYLE[h.cat] || CAT_STYLE.Health;
+    return `<div class="habit ${on ? 'on' : ''} ${isDue ? '' : 'offday'}" data-h="${h.id}" ${ctl} style="--cat:${col}">
+      <div class="tile"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${icon}" fill="currentColor"/></svg></div>
       <div class="grow"><div class="nm">${esc(h.name)}</div><div class="meta">${esc(h.cat)} · ${isDue ? sched : 'Off today'}</div></div>
-      ${st ? `<div class="stk">${st}<small>STREAK</small></div>` : ''}
+      ${st ? `<div class="stk" title="${st} in a row">${FLAME}${st}</div>` : ''}
       <div class="box">${CHECK}</div>
       <button class="act quiet rm" data-rm="${h.id}">Remove</button>
     </div>`;
@@ -199,11 +266,22 @@ function renderHabits() {
     const toggle = () => {
       if (editing) return;
       const h = S.habits.find(x => x.id === r.dataset.h), key = today(), before = ovrExact(), adding = !h.log[key];
-      if (adding) { h.log[key] = true; buzz(12); } else delete h.log[key];
+      const dueNow = S.habits.filter(x => due(x, new Date())), wasClear = dueNow.length > 0 && dueNow.every(x => x.log[key]);
+      if (adding) { h.log[key] = true; buzz(12); } else { delete h.log[key]; Sound.uncheck(); }
       save(); renderAll();
+      const nowClear = dueNow.length > 0 && dueNow.every(x => x.log[key]);
+      if (adding) { if (nowClear && !wasClear) { Sound.clear(); buzz([15, 40, 15, 40, 30]); } else Sound.check(); }
       const row = $('habits').querySelector(`[data-h="${h.id}"]`);
       if (row) {
         row.focus({ preventScroll: true });
+        if (adding && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+          const box = row.querySelector('.box');
+          for (let i = 0; i < 8; i++) {
+            const a = (i / 8) * Math.PI * 2, sp = document.createElement('span');
+            sp.className = 'spark'; sp.style.setProperty('--dx', `${Math.cos(a) * 26}px`); sp.style.setProperty('--dy', `${Math.sin(a) * 26}px`);
+            box.appendChild(sp); sp.addEventListener('animationend', () => sp.remove());
+          }
+        }
         const delta = ovrExact() - before;
         if (adding && delta >= 0.05) {
           const tag = document.createElement('span'); tag.className = 'delta'; tag.textContent = `+${delta.toFixed(1)} OVR`;
@@ -240,13 +318,13 @@ function renderGoals() {
 function bodySVG(side) {
   const paths = BODY[side].map(([slug, d]) => {
     const g = GROUP[slug];
-    if (!g) return `<path d="${d}" fill="${BODY_FILL[slug] || '#262a30'}"/>`;
+    if (!g) return `<path d="${d}" fill="${BODY_FILL[slug] || '#25224a'}"/>`;
     const lv = S.muscles[g] || 0;
-    return `<path class="mus" data-m="${g}" d="${d}" fill="${LEVELS[lv][1]}"><title>${g}: ${LEVELS[lv][0]}</title></path>`;
+    return `<path class="mus l${lv}" data-m="${g}" d="${d}" fill="${LEVELS[lv][1]}"><title>${g}: ${LEVELS[lv][0]}</title></path>`;
   }).join('');
   return `<svg viewBox="${VIEWBOX[side]}" role="img" aria-label="${side} muscle map">
-    <path d="${BODY.outline[side]}" fill="#1a1d21" stroke="#4a5058" stroke-width="1.2" vector-effect="non-scaling-stroke"/>
-    <g stroke="#0f1113" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linejoin="round">${paths}</g></svg>`;
+    <path d="${BODY.outline[side]}" fill="#1a1738" stroke="#4b4680" stroke-width="1.2" vector-effect="non-scaling-stroke"/>
+    <g stroke="#0c0a1d" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linejoin="round">${paths}</g></svg>`;
 }
 function renderBody() {
   $('bodies').innerHTML = ['front', 'back'].map(s => `<div class="fig">${bodySVG(s)}<div class="label">${s}</div></div>`).join('');
@@ -307,6 +385,9 @@ $('quitReset').onclick = () => {
   S.quit.best = Math.max(S.quit.best || 0, Date.now() - S.quit.since); S.quit.since = Date.now(); save(); renderQuit();
 };
 $('quitEdit').onclick = () => quitSheet();
+const paintSound = () => { $('soundToggle').textContent = `Sound: ${S.sound === false ? 'Off' : 'On'}`; };
+$('soundToggle').onclick = () => { S.sound = S.sound === false; save(); paintSound(); Sound.tap(); };
+paintSound();
 $('export').onclick = () => {
   if (window.LevelUpAndroid) { LevelUpAndroid.saveBackup(`levelup-${today()}.json`, JSON.stringify(S, null, 1)); return; }
   const a = document.createElement('a');
@@ -416,7 +497,7 @@ document.querySelectorAll('.nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('.nav button').forEach(x => { x.classList.toggle('on', x === b); if (x === b) x.setAttribute('aria-current', 'page'); else x.removeAttribute('aria-current'); });
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === 'v-' + b.dataset.v));
   if (b.dataset.v === 'stats') renderStats();
-  scrollTo(0, 0);
+  Sound.tap(); scrollTo(0, 0);
 });
 // Android back button: returns true when it handled the press (so the app stays open)
 window.levelupBack = () => {

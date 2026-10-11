@@ -34,7 +34,7 @@ public class MainActivity extends Activity {
     private static final String HOST = "appassets.androidplatform.net";
     private static final String START = "https://" + HOST + "/assets/www/index.html";
     private static final int PICK_FILE = 1;
-    private static final int GROUND = Color.rgb(0x0f, 0x11, 0x13);
+    private static final int GROUND = Color.rgb(0x0c, 0x0a, 0x1d);
 
     private WebView web;
     private ValueCallback<Uri[]> pendingPick;

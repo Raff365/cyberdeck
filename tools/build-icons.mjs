@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 const root = new URL('..', import.meta.url).pathname;
 const crest = readFileSync(root + 'ranks/rank-7-champion.svg', 'utf8');
 // pct = how much of the square the crest fills; bg = ground colour or transparent
-const page = (pct, bg = '#0f1113') => `<body style="margin:0;width:512px;height:512px;background:${bg};display:grid;place-items:center">
+const page = (pct, bg = '#0c0a1d') => `<body style="margin:0;width:512px;height:512px;background:${bg};display:grid;place-items:center">
   <div style="width:${pct}%;height:${pct}%">${crest.replace('<svg ', '<svg width="100%" height="100%" ')}</div></body>`;
 
 const b = await chromium.launch({ executablePath: process.env.CHROMIUM || undefined });
