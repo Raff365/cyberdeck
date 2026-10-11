@@ -3,12 +3,15 @@ package app.levelup;
 import android.app.Activity;
 import android.content.ContentValues;
 import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.provider.Settings;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -19,7 +22,10 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Toast;
 
+import androidx.core.content.FileProvider;
 import androidx.webkit.WebViewAssetLoader;
+
+import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -36,8 +42,14 @@ public class MainActivity extends Activity {
     private static final int PICK_FILE = 1;
     private static final int GROUND = Color.rgb(0x0c, 0x0a, 0x1d);
 
+    private static final long CHECK_EVERY_MS = 6L * 60 * 60 * 1000;   // auto-check at most every 6 hours
+
     private WebView web;
     private ValueCallback<Uri[]> pendingPick;
+    private boolean pageReady;
+    private volatile boolean checking, downloading;
+    private Updater.Release available;        // a newer build we know about
+    private boolean installAfterPermission;   // user went to allow installs from this app
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -63,6 +75,12 @@ public class MainActivity extends Activity {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 return loader.shouldInterceptRequest(request.getUrl());
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                pageReady = true;
+                if (available != null) announce(available); else maybeCheck(false);
             }
 
             @Override
@@ -130,6 +148,121 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         web.onResume();
+        if (installAfterPermission && canInstall()) {
+            installAfterPermission = false;
+            installUpdate();
+        } else if (pageReady) {
+            maybeCheck(false);
+        }
+    }
+
+    // ------------------------------------------------------------------ updates
+
+    private long currentVersion() {
+        try {
+            PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
+            return Build.VERSION.SDK_INT >= 28 ? pi.getLongVersionCode() : pi.versionCode;
+        } catch (Exception e) {
+            return Long.MAX_VALUE;   // unknown: never offer an update
+        }
+    }
+
+    private String currentVersionName() {
+        try {
+            PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
+            return pi.versionName + " (build " + currentVersion() + ")";
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** Asks GitHub for the newest build. Automatic checks are throttled; a manual one always runs. */
+    private void maybeCheck(final boolean manual) {
+        if (checking || downloading) return;
+        final SharedPreferences prefs = getSharedPreferences("updates", MODE_PRIVATE);
+        long now = System.currentTimeMillis();
+        if (!manual && now - prefs.getLong("lastCheck", 0) < CHECK_EVERY_MS) return;
+        checking = true;
+        new Thread(() -> {
+            Updater.Release r = null;
+            String error = null;
+            try {
+                r = Updater.latest();
+                prefs.edit().putLong("lastCheck", System.currentTimeMillis()).apply();
+            } catch (Exception e) {
+                error = "Could not reach the update server";
+            }
+            final Updater.Release found = r;
+            final String err = error;
+            runOnUiThread(() -> {
+                checking = false;
+                if (found != null && found.versionCode > currentVersion()) {
+                    available = found;
+                    announce(found);
+                } else if (manual) {
+                    js("window.levelupUpdateNone && window.levelupUpdateNone(" + JSONObject.quote(err == null ? "" : err) + ")");
+                }
+            });
+        }).start();
+    }
+
+    private void announce(Updater.Release r) {
+        if (pageReady) js("window.levelupUpdate && window.levelupUpdate(" + JSONObject.quote(r.name) + ")");
+    }
+
+    private boolean canInstall() {
+        return Build.VERSION.SDK_INT < 26 || getPackageManager().canRequestPackageInstalls();
+    }
+
+    /** Downloads the new APK and hands it to Android's installer (the user confirms there). */
+    private void installUpdate() {
+        final Updater.Release r = available;
+        if (r == null || downloading) return;
+        if (!canInstall()) {
+            installAfterPermission = true;
+            Toast.makeText(this, "Allow LEVEL UP to install updates, then come back", Toast.LENGTH_LONG).show();
+            try {
+                startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName())));
+            } catch (Exception e) {
+                installAfterPermission = false;
+                js("window.levelupUpdateFailed && window.levelupUpdateFailed(" + JSONObject.quote("Allow installs for LEVEL UP in Settings") + ")");
+            }
+            return;
+        }
+        downloading = true;
+        final File apk = new File(new File(getCacheDir(), "updates"), "LevelUp.apk");
+        new Thread(() -> {
+            try {
+                Updater.download(r, apk, pct -> runOnUiThread(() -> js("window.levelupUpdateProgress && window.levelupUpdateProgress(" + pct + ")")));
+                PackageInfo pi = getPackageManager().getPackageArchiveInfo(apk.getPath(), 0);
+                long code = pi == null ? -1 : (Build.VERSION.SDK_INT >= 28 ? pi.getLongVersionCode() : pi.versionCode);
+                if (pi == null || !getPackageName().equals(pi.packageName) || code <= currentVersion()) {
+                    throw new IllegalStateException("Downloaded file is not a newer LEVEL UP");
+                }
+                runOnUiThread(() -> {
+                    downloading = false;
+                    Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".files", apk);
+                    Intent install = new Intent(Intent.ACTION_VIEW)
+                            .setDataAndType(uri, "application/vnd.android.package-archive")
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    try {
+                        startActivity(install);
+                        js("window.levelupUpdateProgress && window.levelupUpdateProgress(100)");
+                    } catch (Exception e) {
+                        js("window.levelupUpdateFailed && window.levelupUpdateFailed(" + JSONObject.quote("Could not open the installer") + ")");
+                    }
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    downloading = false;
+                    js("window.levelupUpdateFailed && window.levelupUpdateFailed(" + JSONObject.quote("Download failed. Check your connection and try again") + ")");
+                });
+            }
+        }).start();
+    }
+
+    private void js(String code) {
+        if (web != null) web.evaluateJavascript(code, null);
     }
 
     @Override
@@ -140,6 +273,21 @@ public class MainActivity extends Activity {
 
     /** Called from app.js; the WebView cannot download blob: URLs itself. */
     public class Bridge {
+        @JavascriptInterface
+        public void checkForUpdate() {
+            runOnUiThread(() -> maybeCheck(true));
+        }
+
+        @JavascriptInterface
+        public void installUpdate() {
+            runOnUiThread(MainActivity.this::installUpdate);
+        }
+
+        @JavascriptInterface
+        public String version() {
+            return currentVersionName();
+        }
+
         @JavascriptInterface
         public void saveBackup(String name, String json) {
             final String safe = (name == null ? "levelup-backup.json" : name).replaceAll("[^A-Za-z0-9._-]", "_");

@@ -379,6 +379,18 @@ input[type=range] { width: 100%; accent-color: var(--rank); height: 28px; }
 .trophy.locked .medal { background: var(--panel-hi); color: var(--faint); box-shadow: none; border: 1px dashed var(--rule-hi); }
 .nav div.n4 { grid-template-columns: repeat(4, 1fr); }
 
+/* ---- update banner (Android app) ---- */
+.update { position: relative; overflow: hidden; display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 12px 14px; margin-bottom: 12px; border-radius: 16px;
+  background: linear-gradient(100deg, #3a2a05, #1e1a40); border: 1px solid #ffd23f99; box-shadow: 0 0 22px -6px #ffd23f88; }
+.update::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: var(--p, 0%); background: #ffd23f26; transition: width .3s; }
+.update > * { position: relative; }
+.update .ic { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: #ffd23f; color: #3a2405; flex: none; }
+.update .ic svg { width: 22px; height: 22px; }
+.update b { display: block; font: italic 800 20px/1 var(--display); color: #ffd23f; }
+.update small { display: block; color: var(--dim); font-size: 12.5px; margin-top: 3px; }
+.update.busy .ic svg { animation: nudge .9s ease-in-out infinite; }
+@keyframes nudge { 50% { transform: translateY(3px); } }
+
 /* ---- rank up: rays, particles, the crest slams in ---- */
 .rankup { position: fixed; inset: 0; z-index: 60; overflow: hidden; background: radial-gradient(60% 42% at 50% 46%, color-mix(in srgb, var(--rank) 30%, transparent), transparent 72%), #07051a; display: none; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px; }
 .rankup.open { display: flex; }
@@ -411,6 +423,7 @@ input[type=range] { width: 100%; accent-color: var(--rank); height: 28px; }
 
   <!-- HOME -->
   <main class="view on" id="v-home">
+    <button class="update" id="update" hidden></button>
     <section class="card" id="card" aria-label="Rank card">
       <div class="card-main">
         <div>
@@ -485,9 +498,9 @@ input[type=range] { width: 100%; accent-color: var(--rank); height: 28px; }
       <div class="acts"><button class="act" id="quitEdit">Edit</button><button class="act quiet" id="quitReset">I slipped, reset</button></div>
     </section>
 
-    <div class="foot"><button class="act" id="soundToggle"></button><button class="act" id="export">Export backup</button><button class="act" id="import">Import</button><button class="act danger" id="erase">Erase all</button>
+    <div class="foot"><button class="act" id="soundToggle"></button><button class="act" id="checkUpdate" hidden>Check for updates</button><button class="act" id="export">Export backup</button><button class="act" id="import">Import</button><button class="act danger" id="erase">Erase all</button>
       <input type="file" id="importFile" accept="application/json,.json" hidden></div>
-    <p class="credit">Body map art: react-native-body-highlighter (MIT).</p>
+    <p class="credit"><span id="appVersion"></span> Body map art: react-native-body-highlighter (MIT).</p>
   </main>
 </div>
 

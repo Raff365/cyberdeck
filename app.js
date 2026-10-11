@@ -687,12 +687,16 @@ $('coins').onclick = () => document.querySelector('.nav button[data-v=locker]').
 // achievement toasts queue up
 const toasts = []; let toastBusy = false;
 function showToast(a) { toasts.push(a); if (!toastBusy) nextToast(); }
+function showNote(title, sub) { showToast({ note: true, name: title, desc: sub }); }
 function nextToast() {
   const a = toasts.shift(), el = $('toast');
   if (!a) { toastBusy = false; return; }
   toastBusy = true;
-  el.innerHTML = `<div class="medal">${TROPHY}</div><div><span class="label">Achievement unlocked</span><b>${esc(a.name)}</b><small>${esc(a.desc)} · +${a.coins} coins</small></div>`;
-  el.classList.add('show'); Sound.achieve(); buzz([10, 30, 10]);
+  el.innerHTML = a.note
+    ? `<div class="medal">${UP_ICON}</div><div><span class="label">LEVEL UP</span><b>${esc(a.name)}</b><small>${esc(a.desc)}</small></div>`
+    : `<div class="medal">${TROPHY}</div><div><span class="label">Achievement unlocked</span><b>${esc(a.name)}</b><small>${esc(a.desc)} · +${a.coins} coins</small></div>`;
+  el.classList.add('show');
+  if (a.note) Sound.tap(); else { Sound.achieve(); buzz([10, 30, 10]); }
   setTimeout(() => { el.classList.remove('show'); setTimeout(nextToast, 420); }, 2800);
 }
 
@@ -726,6 +730,40 @@ function shop(list, slot, id, price, btn) {
   } else Sound.tap();
   S.equip[slot] = id; save(); renderLocker(); renderCard(); afterChange();
 }
+// ---- updates (Android app only): the native side checks GitHub and calls these
+const UP_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 3h2v9.2l3.3-3.3 1.4 1.4L12 16l-5.7-5.7 1.4-1.4 3.3 3.3zM4 18h16v2H4z"/></svg>';
+window.levelupUpdate = name => {
+  const u = $('update'), wasHidden = u.hidden;
+  $('checkUpdate').textContent = 'Check for updates';
+  u.hidden = false; u.classList.remove('busy'); u.style.removeProperty('--p');
+  u.innerHTML = `<span class="ic">${UP_ICON}</span><span><b>Update ready</b><small>${esc(name)} · tap to install</small></span>`;
+  u.onclick = () => {
+    if (u.classList.contains('busy') || !window.LevelUpAndroid) return;
+    u.classList.add('busy'); u.querySelector('small').textContent = 'Downloading...';
+    LevelUpAndroid.installUpdate();
+  };
+  if (wasHidden && !$('v-home').classList.contains('on')) showNote('Update ready', 'Go to Home and tap the banner to install');
+};
+window.levelupUpdateProgress = pct => {
+  const u = $('update'); if (u.hidden) return;
+  u.style.setProperty('--p', `${pct}%`);
+  u.querySelector('small').textContent = pct >= 100 ? 'Opening the installer... tap Update' : `Downloading ${pct}%`;
+  if (pct >= 100) setTimeout(() => u.classList.remove('busy'), 4000);
+};
+window.levelupUpdateFailed = msg => {
+  const u = $('update'); u.classList.remove('busy'); u.style.removeProperty('--p');
+  if (!u.hidden) u.querySelector('small').textContent = `${msg} · tap to retry`;
+};
+window.levelupUpdateNone = err => {
+  $('checkUpdate').textContent = 'Check for updates';
+  showNote(err ? 'No connection' : "You're up to date", err || `Version ${window.LevelUpAndroid ? LevelUpAndroid.version() : ''}`);
+};
+if (window.LevelUpAndroid) {
+  $('checkUpdate').hidden = false;
+  $('checkUpdate').onclick = () => { $('checkUpdate').textContent = 'Checking...'; LevelUpAndroid.checkForUpdate(); Sound.tap(); };
+  try { $('appVersion').textContent = `Version ${LevelUpAndroid.version()}.`; } catch (e) {}
+}
+
 function afterChange() { checkBoss(); checkAchievements(); renderCoins(); if ($('v-locker').classList.contains('on')) renderLocker(); }
 
 /* ------------------------------------------------------------------ nav + boot */

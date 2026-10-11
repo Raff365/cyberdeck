@@ -65,7 +65,7 @@ const MAT = {
   candyRed:  { base: '#ff2d55', spec: 0.80, pow: 24, rim: '#ffc8d4', amb: 0.40 },
   mouthMag:  { base: '#3a0626', spec: 0.10, pow: 6,  rim: '#7a1a52', amb: 0.50 },
   socketMg:  { base: '#2a0420', spec: 0.10, pow: 6,  rim: '#6a1048', amb: 0.50 },
-  eyeOrg:    { base: '#ff9a1f', spec: 0.50, pow: 6,  rim: '#fff0c0', amb: 0.92 },
+  eyeOrg:    { base: '#ff6a0a', spec: 0.50, pow: 6,  rim: '#ffe0a0', amb: 0.92 },
   // 3 wraith
   robe:      { base: '#3d44a8', spec: 0.30, pow: 12, rim: '#9aa8ff', amb: 0.40 },
   robeDk:    { base: '#282d78', spec: 0.25, pow: 10, rim: '#8090f0', amb: 0.40 },
@@ -81,7 +81,7 @@ const MAT = {
   krSpot:    { base: '#ff8a48', spec: 0.15, pow: 8,  rim: '#ffd0b0', amb: 0.40 },
   remote:    { base: '#3b3f52', spec: 0.50, pow: 18, rim: '#9aa4d0', amb: 0.40 },
   button:    { base: '#c9cede', spec: 0.50, pow: 16, rim: '#ffffff', amb: 0.50 },
-  sucker:    { base: '#ffc79e', spec: 0.50, pow: 16, rim: '#fff0e0', amb: 0.45 },
+  sucker:    { base: '#ffb08a', spec: 0.15, pow: 8,  rim: '#ffe0d0', amb: 0.45 },
   brow:      { base: '#6e1810', spec: 0.30, pow: 10, rim: '#d05a40', amb: 0.40 },
   socketRd:  { base: '#2a0806', spec: 0.10, pow: 6,  rim: '#6a2010', amb: 0.50 },
   eyeGrn:    { base: '#62ff5a', spec: 0.50, pow: 6,  rim: '#eaffe0', amb: 0.92 },
@@ -220,8 +220,8 @@ const flat = (outline, mat) => [{ pts: outline, fill: shade(MAT[mat], [0, 0, 1])
 // flat faceted halo (low opacity polygon, no shading) for glows
 const halo = (outline, col, op, s, c = centroid(outline)) => ({ pts: outline.map(([x, y]) => [c[0] + (x - c[0]) * s, c[1] + (y - c[1]) * s]), fill: col, op });
 // An emissive eye: two soft halo rings, a dark socket, then a gem-cut glowing eye.
-function eye(outline, mat, { socket, sock = 1.35, glow = [2.1, 1.55], ops = [0.13, 0.2], table = 2, bevel = 1.6, depth = 2, apex = 2.5 } = {}) {
-  const col = MAT[mat].base, c = centroid(outline), out = [];
+function eye(outline, mat, { socket, sock = 1.35, glow = [2.1, 1.55], ops = [0.13, 0.2], haloCol, table = 2, bevel = 1.6, depth = 2, apex = 2.5 } = {}) {
+  const col = haloCol || MAT[mat].base, c = centroid(outline), out = [];
   glow.forEach((s, i) => out.push(halo(outline, col, ops[i], s, c)));
   if (socket) out.push(...flat(outline.map(([x, y]) => [c[0] + (x - c[0]) * sock, c[1] + (y - c[1]) * sock]), socket));
   out.push(...part(outline, mat, { bevel, depth, apex, table }));
@@ -262,7 +262,7 @@ function procrastinator() {
   // lazy open mouth, tongue lolling out of one corner, a drool drop on the other
   const mouth = [[74, 135], [88, 137], [100, 138], [112, 137], [126, 134], [122, 143], [111, 148], [100, 149], [89, 148], [79, 144]].map(([x, y]) => [x, y]);
   out.push(...part(mouth, 'mouthLav', { bevel: 1.8, depth: 1, plateau: 'flat' }));
-  out.push(...dome(smooth([[102, 144], [118, 142], [121, 152], [116, 160], [109, 162], [103, 156]], 2), 'tongue', { rings: [[0.6, 3, -1, -1]], apex: 4.5 }));
+  out.push(...dome(smooth([[102, 144], [118, 142], [121, 152], [116, 160], [109, 162], [103, 156]], 2), 'tongue', { rings: [[0.6, 2, -1, -1.5]], apex: 2.8 }));
   out.push(...tube([[78, 141], [78.6, 148], [79, 154]], [1.6, 1.3, 1.5], 'drool', { lift: 0.8, shape: 'ridge' }));
   out.push(...dome(ellipse(79, 157.5, 3.6, 4, 8), 'drool', { rings: [[0.5, 2, -0.8, -1]], apex: 3 }));
   // tiny crown sliding off to one side
@@ -298,9 +298,9 @@ function serpentHead(at, { tongue = false, cut = 1.6 } = {}) {
   for (const s of [1, -1]) out.push(...flat(P([[s * 3, 9], [s * 7, 7.5], [s * 6, 10.5]]), 'socketTl'));
   // slanted eyes under hard brows
   for (const s of [1, -1]) {
-    const e = P([[5, -4], [12, -6], [21, -11], [20, -4], [14, 1], [7, 0.5]].map(([x, y]) => [s * x, y]));
-    out.push(...eye(s > 0 ? e : e.reverse(), 'eyeCyan', { socket: 'socketTl', sock: 1.3, glow: [2.2, 1.6], ops: [0.14, 0.22], table: cut, bevel: 1.2, depth: 1.5, apex: 2 }));
-    const br = P([[3, -9], [22, -17], [25, -13], [5, -5.5]].map(([x, y]) => [s * x, y]));
+    const e = P([[7, -2.5], [13, -6], [20, -9.5], [24, -10.5], [22.5, -4.5], [16, 0], [10, 0.5]].map(([x, y]) => [s * x, y]));
+    out.push(...eye(s > 0 ? e : e.reverse(), 'eyeCyan', { socket: 'socketTl', sock: 1.2, glow: [2.1, 1.55], ops: [0.14, 0.22], table: cut, bevel: 1.2, depth: 1.5, apex: 2 }));
+    const br = P([[6.5, -8], [24, -16.5], [27, -12.5], [8.5, -5]].map(([x, y]) => [s * x, y]));
     out.push(...part(br, 'scaleDk', { bevel: 1.4, depth: 2.5, apex: 2.5 }));
   }
   return out;
@@ -386,7 +386,7 @@ function zee(cx, cy, s, deg) {
 function wraith() {
   const out = [];
   // floating Z's, drifting up and away
-  out.push(...zee(186, 8, 13, -14), ...zee(170, 30, 18, -10));
+  out.push(...zee(192, 10, 12, -14), ...zee(178, 33, 17, -10));
   // robe: hood over shoulders falling to a tattered hem
   const robe = sym([[100, 30], [130, 40], [150, 66], [156, 98], [166, 124], [176, 150], [186, 178], [166, 168], [158, 194], [140, 174], [124, 198], [112, 176], [100, 192]]);
   out.push(...dome(robe, 'robeDk', { c: [100, 110], rings: [[0.82, 12, 0, -3], [0.5, 22, 0, -12]], apex: 26 }));
@@ -410,10 +410,10 @@ function wraith() {
   // two glowing eyes in the dark, sleepy but cross
   for (const s of [1, -1]) {
     const e = [[107, 80], [114, 78], [122, 74], [123, 82], [118, 89], [110, 88]];
-    out.push(...eye(s > 0 ? e : mirrorX(e), 'eyeWht', { glow: [1.75, 1.35], ops: [0.12, 0.2], table: 1.8, bevel: 1.4, depth: 2, apex: 2.5 }));
+    out.push(...eye(s > 0 ? e : mirrorX(e), 'eyeWht', { glow: [1.8, 1.38], ops: [0.16, 0.26], haloCol: '#6fb8ff', table: 1.8, bevel: 1.4, depth: 2, apex: 2.5 }));
   }
   // and one big Z right next to it
-  out.push(...zee(152, 50, 24, -8));
+  out.push(...zee(160, 60, 23, -8));
   return out;
 }
 
@@ -436,7 +436,7 @@ function tentacle(sp, w0, mat = 'kraken') {
     if (i >= n - 1) continue;
     const p = sp[i], a = sp[i - 1], b = sp[i + 1], m = [(a[0] + b[0]) / 2 - p[0], (a[1] + b[1]) / 2 - p[1]], l = Math.hypot(...m) || 1;
     const c = [p[0] + m[0] / l * ws[i] * 0.45, p[1] + m[1] / l * ws[i] * 0.45], r = ws[i] * 0.36;
-    out.push(...dome(ellipse(c[0], c[1], r, r, 5), 'sucker', { rings: [], apex: r * 0.8 }));
+    out.push(...dome(ellipse(c[0], c[1], r, r, 6), 'sucker', { rings: [], apex: r * 0.35 }));
   }
   return out;
 }
