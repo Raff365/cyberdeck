@@ -11,7 +11,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
-import android.provider.Settings;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -48,8 +47,10 @@ public class MainActivity extends Activity {
     private ValueCallback<Uri[]> pendingPick;
     private boolean pageReady;
     private volatile boolean checking, downloading;
+    private boolean manualPending;            // "Check for updates" was tapped while a check was running
     private Updater.Release available;        // a newer build we know about
-    private boolean installAfterPermission;   // user went to allow installs from this app
+    private boolean resumed;
+    private File readyApk;                    // downloaded and checked, waiting for the app to be on screen
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -129,28 +130,34 @@ public class MainActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
     }
 
-    /** Back closes an open sheet or returns to Home first; only then does it leave the app. */
+    /**
+     * Back closes an open sheet or returns to Home first; only then does it leave the app.
+     * Leaving keeps the app alive in the background, so a running update download is not lost.
+     */
     @Override
     @SuppressWarnings("deprecation")
     public void onBackPressed() {
         web.evaluateJavascript("(window.levelupBack && window.levelupBack()) ? 1 : 0", value -> {
-            if (!"1".equals(value)) finish();
+            if (!"1".equals(value)) moveTaskToBack(true);
         });
     }
 
     @Override
     protected void onPause() {
         super.onPause();
+        resumed = false;
         web.onPause();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        resumed = true;
         web.onResume();
-        if (installAfterPermission && canInstall()) {
-            installAfterPermission = false;
-            installUpdate();
+        if (readyApk != null) {
+            File apk = readyApk;
+            readyApk = null;
+            openInstaller(apk);
         } else if (pageReady) {
             maybeCheck(false);
         }
@@ -176,19 +183,31 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** Asks GitHub for the newest build. Automatic checks are throttled; a manual one always runs. */
+    /**
+     * Asks GitHub for the newest build. Automatic checks are throttled, but only after a check that
+     * found nothing new, so a known update is offered again on every launch. A manual check always runs.
+     */
     private void maybeCheck(final boolean manual) {
-        if (checking || downloading) return;
+        if (downloading) {
+            if (manual) noUpdate("Watch the banner on Home", "Update downloading");
+            return;
+        }
+        if (checking) {
+            if (manual) manualPending = true;
+            return;
+        }
         final SharedPreferences prefs = getSharedPreferences("updates", MODE_PRIVATE);
-        long now = System.currentTimeMillis();
-        if (!manual && now - prefs.getLong("lastCheck", 0) < CHECK_EVERY_MS) return;
+        long since = System.currentTimeMillis() - prefs.getLong("lastCheck", 0);
+        if (!manual && (available != null || (since >= 0 && since < CHECK_EVERY_MS))) return;
         checking = true;
         new Thread(() -> {
             Updater.Release r = null;
             String error = null;
             try {
                 r = Updater.latest();
-                prefs.edit().putLong("lastCheck", System.currentTimeMillis()).apply();
+                if (r == null || r.versionCode <= currentVersion()) {
+                    prefs.edit().putLong("lastCheck", System.currentTimeMillis()).apply();
+                }
             } catch (Exception e) {
                 error = "Could not reach the update server";
             }
@@ -196,39 +215,34 @@ public class MainActivity extends Activity {
             final String err = error;
             runOnUiThread(() -> {
                 checking = false;
+                boolean asked = manual || manualPending;
+                manualPending = false;
                 if (found != null && found.versionCode > currentVersion()) {
                     available = found;
                     announce(found);
-                } else if (manual) {
-                    js("window.levelupUpdateNone && window.levelupUpdateNone(" + JSONObject.quote(err == null ? "" : err) + ")");
+                } else if (asked) {
+                    noUpdate(err == null ? "" : err, err == null ? "" : "No connection");
                 }
             });
         }).start();
+    }
+
+    private void noUpdate(String detail, String title) {
+        js("window.levelupUpdateNone && window.levelupUpdateNone(" + JSONObject.quote(detail) + "," + JSONObject.quote(title) + ")");
     }
 
     private void announce(Updater.Release r) {
         if (pageReady) js("window.levelupUpdate && window.levelupUpdate(" + JSONObject.quote(r.name) + ")");
     }
 
-    private boolean canInstall() {
-        return Build.VERSION.SDK_INT < 26 || getPackageManager().canRequestPackageInstalls();
-    }
-
-    /** Downloads the new APK and hands it to Android's installer (the user confirms there). */
+    /**
+     * Downloads the new APK and hands it to Android's installer (the user confirms there).
+     * The first time, the installer itself asks the user to allow installs from LEVEL UP. It copies
+     * the APK before asking, so the update survives Android 11 restarting this app when that is allowed.
+     */
     private void installUpdate() {
         final Updater.Release r = available;
         if (r == null || downloading) return;
-        if (!canInstall()) {
-            installAfterPermission = true;
-            Toast.makeText(this, "Allow LEVEL UP to install updates, then come back", Toast.LENGTH_LONG).show();
-            try {
-                startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName())));
-            } catch (Exception e) {
-                installAfterPermission = false;
-                js("window.levelupUpdateFailed && window.levelupUpdateFailed(" + JSONObject.quote("Allow installs for LEVEL UP in Settings") + ")");
-            }
-            return;
-        }
         downloading = true;
         final File apk = new File(new File(getCacheDir(), "updates"), "LevelUp.apk");
         new Thread(() -> {
@@ -241,16 +255,7 @@ public class MainActivity extends Activity {
                 }
                 runOnUiThread(() -> {
                     downloading = false;
-                    Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".files", apk);
-                    Intent install = new Intent(Intent.ACTION_VIEW)
-                            .setDataAndType(uri, "application/vnd.android.package-archive")
-                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                    try {
-                        startActivity(install);
-                        js("window.levelupUpdateProgress && window.levelupUpdateProgress(100)");
-                    } catch (Exception e) {
-                        js("window.levelupUpdateFailed && window.levelupUpdateFailed(" + JSONObject.quote("Could not open the installer") + ")");
-                    }
+                    openInstaller(apk);
                 });
             } catch (Exception e) {
                 runOnUiThread(() -> {
@@ -259,6 +264,24 @@ public class MainActivity extends Activity {
                 });
             }
         }).start();
+    }
+
+    private void openInstaller(File apk) {
+        if (!resumed) {   // Android blocks starting the installer from the background; open it on return
+            readyApk = apk;
+            return;
+        }
+        // A separate task, so replacing this app does not close the installer's "App installed" screen.
+        Intent install = new Intent(Intent.ACTION_VIEW)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            install.setDataAndType(FileProvider.getUriForFile(this, getPackageName() + ".files", apk),
+                    "application/vnd.android.package-archive");
+            startActivity(install);
+            js("window.levelupUpdateProgress && window.levelupUpdateProgress(100)");
+        } catch (Exception e) {
+            js("window.levelupUpdateFailed && window.levelupUpdateFailed(" + JSONObject.quote("Could not open the installer") + ")");
+        }
     }
 
     private void js(String code) {

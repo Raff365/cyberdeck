@@ -733,7 +733,7 @@ function shop(list, slot, id, price, btn) {
 // ---- updates (Android app only): the native side checks GitHub and calls these
 const UP_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 3h2v9.2l3.3-3.3 1.4 1.4L12 16l-5.7-5.7 1.4-1.4 3.3 3.3zM4 18h16v2H4z"/></svg>';
 window.levelupUpdate = name => {
-  const u = $('update'), wasHidden = u.hidden;
+  const u = $('update');
   $('checkUpdate').textContent = 'Check for updates';
   u.hidden = false; u.classList.remove('busy'); u.style.removeProperty('--p');
   u.innerHTML = `<span class="ic">${UP_ICON}</span><span><b>Update ready</b><small>${esc(name)} · tap to install</small></span>`;
@@ -742,21 +742,21 @@ window.levelupUpdate = name => {
     u.classList.add('busy'); u.querySelector('small').textContent = 'Downloading...';
     LevelUpAndroid.installUpdate();
   };
-  if (wasHidden && !$('v-home').classList.contains('on')) showNote('Update ready', 'Go to Home and tap the banner to install');
+  if (!$('v-home').classList.contains('on')) showNote('Update ready', 'Go to Home and tap the banner to install');
 };
 window.levelupUpdateProgress = pct => {
   const u = $('update'); if (u.hidden) return;
   u.style.setProperty('--p', `${pct}%`);
-  u.querySelector('small').textContent = pct >= 100 ? 'Opening the installer... tap Update' : `Downloading ${pct}%`;
-  if (pct >= 100) setTimeout(() => u.classList.remove('busy'), 4000);
+  u.querySelector('small').textContent = pct >= 100 ? 'Opening the installer...' : `Downloading ${pct}%`;
+  if (pct >= 100) setTimeout(() => { u.classList.remove('busy'); u.querySelector('small').textContent = 'Not installed yet? Tap to try again'; }, 4000);
 };
 window.levelupUpdateFailed = msg => {
   const u = $('update'); u.classList.remove('busy'); u.style.removeProperty('--p');
   if (!u.hidden) u.querySelector('small').textContent = `${msg} · tap to retry`;
 };
-window.levelupUpdateNone = err => {
+window.levelupUpdateNone = (detail, title) => {
   $('checkUpdate').textContent = 'Check for updates';
-  showNote(err ? 'No connection' : "You're up to date", err || `Version ${window.LevelUpAndroid ? LevelUpAndroid.version() : ''}`);
+  showNote(title || "You're up to date", detail || `Version ${window.LevelUpAndroid ? LevelUpAndroid.version() : ''}`);
 };
 if (window.LevelUpAndroid) {
   $('checkUpdate').hidden = false;

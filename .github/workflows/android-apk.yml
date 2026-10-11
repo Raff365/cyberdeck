@@ -20,8 +20,10 @@ on:
 permissions:
   contents: write   # to publish the release
 
+# One build at a time across all branches: the app updates from whichever release is marked latest,
+# so an older build must never finish after a newer one and take that mark back.
 concurrency:
-  group: android-apk-${{ github.ref }}
+  group: android-apk
   cancel-in-progress: true
 
 jobs:
