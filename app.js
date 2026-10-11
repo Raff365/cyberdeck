@@ -68,6 +68,8 @@ function seed() {
     hm: null,
     peakIdx: null,
     sound: true,
+    spent: 0, bank: 0, ach: {}, bossWins: {},
+    owned: { skins: ['default'], titles: ['Rookie'] }, equip: { skin: 'default', title: 'Rookie' },
   };
 }
 // One-time carry-over from the first prototype (localStorage key lockin.v1).
@@ -90,6 +92,14 @@ for (const h of S.habits) {
   const first = Object.keys(h.log || {}).sort()[0];
   h.created = [h.created || today(), first || today()].sort()[0];
 }
+// saves from before the game layer get its fields
+if (typeof S.spent !== 'number') S.spent = 0;
+if (typeof S.bank !== 'number') S.bank = 0;
+if (!S.ach) S.ach = {};
+if (!S.bossWins) S.bossWins = {};
+if (!S.owned) S.owned = { skins: ['default'], titles: ['Rookie'] };
+if (!S.equip) S.equip = { skin: 'default', title: 'Rookie' };
+if (S.sound === undefined) S.sound = true;
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -107,12 +117,26 @@ const Sound = (() => {
     o.connect(g).connect(a.destination); o.start(t); o.stop(t + dur + 0.02);
   }
   const on = () => S.sound !== false;
+  function noise(at, dur, vol) {
+    const a = ctx(); if (!a) return;
+    const n = Math.floor(a.sampleRate * dur), buf = a.createBuffer(1, n, a.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const src = a.createBufferSource(), g = a.createGain(), t = a.currentTime + at;
+    src.buffer = buf; g.gain.setValueAtTime(vol, t); src.connect(g).connect(a.destination); src.start(t);
+  }
   return {
     check() { if (!on()) return; note(660, 0, 0.09, { type: 'square', vol: 0.05 }); note(990, 0.07, 0.16, { vol: 0.1 }); },
     uncheck() { if (!on()) return; note(420, 0, 0.12, { vol: 0.07, to: 300 }); },
     clear() { if (!on()) return; [523, 659, 784, 1047].forEach((f, i) => note(f, i * 0.09, 0.22, { vol: 0.1 })); },
     rankUp() { if (!on()) return; [392, 523, 659, 784].forEach((f, i) => note(f, i * 0.11, 0.2, { type: 'square', vol: 0.05 })); note(1047, 0.46, 0.7, { vol: 0.14 }); note(1568, 0.46, 0.7, { vol: 0.06 }); },
     tap() { if (!on()) return; note(880, 0, 0.05, { type: 'sine', vol: 0.05 }); },
+    hit() { if (!on()) return; noise(0, 0.12, 0.16); note(160, 0, 0.16, { type: 'square', vol: 0.06, to: 70 }); note(990, 0.02, 0.12, { vol: 0.07 }); },
+    crit() { if (!on()) return; noise(0, 0.2, 0.22); note(220, 0, 0.22, { type: 'sawtooth', vol: 0.06, to: 60 }); note(1320, 0.04, 0.2, { vol: 0.1 }); note(1760, 0.12, 0.25, { vol: 0.07 }); },
+    bossDown() { if (!on()) return; noise(0, 0.5, 0.18); note(300, 0, 0.6, { type: 'sawtooth', vol: 0.06, to: 50 }); [523, 659, 784, 1047, 1319].forEach((f, i) => note(f, 0.55 + i * 0.1, 0.3, { vol: 0.1 })); },
+    achieve() { if (!on()) return; [1047, 1319, 1568, 2093].forEach((f, i) => note(f, i * 0.06, 0.25, { type: 'sine', vol: 0.07 })); },
+    combo(n) { if (!on()) return; const f = 440 * Math.pow(2, Math.min(n, 10) / 6); note(f, 0, 0.12, { type: 'square', vol: 0.05 }); note(f * 1.5, 0.08, 0.18, { vol: 0.08 }); },
+    buy() { if (!on()) return; note(1319, 0, 0.08, { vol: 0.08 }); note(1760, 0.07, 0.25, { vol: 0.1 }); noise(0.02, 0.06, 0.05); },
+    nope() { if (!on()) return; note(180, 0, 0.12, { type: 'square', vol: 0.06 }); note(150, 0.12, 0.16, { type: 'square', vol: 0.06 }); },
   };
 })();
 
@@ -178,7 +202,8 @@ function renderCard() {
   const tier = TIERS[placing ? 0 : r.tier], root = document.documentElement.style;
   root.setProperty('--rank', placing ? '#aba5cc' : tier[1]);
   root.setProperty('--card-a', placing ? '#3a3566' : tier[2]); root.setProperty('--card-b', placing ? '#141130' : tier[3]);
-  $('card').classList.toggle('placing', placing);
+  $('card').className = `card${placing ? ' placing' : ''}${S.equip.skin && S.equip.skin !== 'default' ? ' skin-' + S.equip.skin : ''}`;
+  $('ptitle').hidden = !S.equip.title; $('ptitle').textContent = S.equip.title || '';
   $('ovr').textContent = placing ? '?' : Math.floor(x);
   $('rankname').textContent = placing ? 'Unranked' : r.name;
   for (const id of ['ring', 'ringHalo']) {
@@ -203,12 +228,20 @@ function renderCard() {
   else if (r.idx > S.peakIdx) { const from = S.peakIdx; S.peakIdx = r.idx; save(); rankUp(r, from); }
 }
 function rankUp(r, from) {
-  $('rankupImg').src = CRESTS[r.tier]; $('rankupName').textContent = r.name;
-  $('rankupFrom').textContent = `${rankName(from)} \u2192 ${r.name}`;
-  $('rankup').classList.add('open'); buzz([20, 40, 60]); Sound.rankUp(); burst(TIERS[r.tier][1]);
+  celebrate({ hd: 'Rank up!', from: `${rankName(from)} \u2192 ${r.name}`, img: CRESTS[r.tier], name: r.name, color: TIERS[r.tier][1], sound: 'rankUp' });
+}
+// full-screen moments (rank-ups, boss kills) queue up and play one after another
+const moments = [];
+function celebrate(m) { moments.push(m); if (!$('rankup').classList.contains('open')) nextMoment(); }
+function nextMoment() {
+  const m = moments.shift(), ov = $('rankup');
+  if (!m) { ov.classList.remove('open'); return; }
+  $('rankupHd').textContent = m.hd; $('rankupFrom').textContent = m.from; $('rankupImg').src = m.img; $('rankupName').textContent = m.name;
+  ov.style.setProperty('--rank', m.color);
+  ov.classList.add('open'); buzz([20, 40, 60]); Sound[m.sound](); burst(m.color);
   setTimeout(() => $('rankupClose').focus(), 30);
 }
-$('rankupClose').onclick = () => { $('rankup').classList.remove('open'); Sound.tap(); };
+$('rankupClose').onclick = () => { Sound.tap(); nextMoment(); };
 // rank-up confetti: one canvas, a few seconds, then it stops drawing
 function burst(color) {
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
@@ -265,12 +298,17 @@ function renderHabits() {
   el.querySelectorAll('.habit').forEach(r => {
     const toggle = () => {
       if (editing) return;
-      const h = S.habits.find(x => x.id === r.dataset.h), key = today(), before = ovrExact(), adding = !h.log[key];
+      const h = S.habits.find(x => x.id === r.dataset.h), key = today(), before = ovrExact(), adding = !h.log[key], hpBefore = bossState().hp;
       const dueNow = S.habits.filter(x => due(x, new Date())), wasClear = dueNow.length > 0 && dueNow.every(x => x.log[key]);
-      if (adding) { h.log[key] = true; buzz(12); } else { delete h.log[key]; Sound.uncheck(); }
+      if (adding) { h.log[key] = Date.now(); buzz(12); } else { delete h.log[key]; Sound.uncheck(); }
       save(); renderAll();
       const nowClear = dueNow.length > 0 && dueNow.every(x => x.log[key]);
-      if (adding) { if (nowClear && !wasClear) { Sound.clear(); buzz([15, 40, 15, 40, 30]); } else Sound.check(); }
+      if (adding) {
+        if (nowClear && !wasClear) { Sound.clear(); buzz([15, 40, 15, 40, 30]); } else Sound.check();
+        const dealt = hpBefore - bossState().hp;
+        if (dealt > 0) showHit(dealt, hitOf(h, key) > HIT);
+        combo();
+      }
       const row = $('habits').querySelector(`[data-h="${h.id}"]`);
       if (row) {
         row.focus({ preventScroll: true });
@@ -295,7 +333,10 @@ function renderHabits() {
   });
   el.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => {
     const h = S.habits.find(x => x.id === b.dataset.rm);
-    if (confirm(`Remove "${h.name}" and its history?`)) { S.habits = S.habits.filter(x => x !== h); save(); renderAll(); }
+    if (confirm(`Remove "${h.name}" and its history?`)) {
+      S.bank += Object.keys(h.log).length * 10;   // coins you earned from it stay yours
+      S.habits = S.habits.filter(x => x !== h); save(); renderAll();
+    }
   });
   $('editHabits').textContent = editing ? 'Done' : 'Edit';
 }
@@ -420,7 +461,7 @@ const closeSheet = () => {
   if (prevFocus && prevFocus.isConnected) prevFocus.focus({ preventScroll: true });
 };
 $('sheetbg').onclick = e => { if (e.target === $('sheetbg')) closeSheet(); };
-addEventListener('keydown', e => { if (e.key === 'Escape') { closeSheet(); $('rankup').classList.remove('open'); } });
+addEventListener('keydown', e => { if (e.key === 'Escape') { closeSheet(); if ($('rankup').classList.contains('open')) nextMoment(); } });
 
 function habitSheet() {
   let pick = ALL.slice();
@@ -457,7 +498,7 @@ function goalSheet(g) {
     saveBtn.onclick = () => {
       const was = g.pct; Object.assign(g, { name: name.value.trim(), date: el.querySelector('#gDate').value, pct: +pct.value });
       if (isNew) S.goals.push(g);
-      save(); closeSheet(); renderGoals(); if (g.pct >= 100 && was < 100) buzz([20, 30, 20]);
+      save(); closeSheet(); renderGoals(); afterChange(); if (g.pct >= 100 && was < 100) buzz([20, 30, 20]);
     };
     const del = el.querySelector('#gDel');
     if (del) del.onclick = () => { if (confirm(`Remove "${g.name}"?`)) { S.goals = S.goals.filter(x => x.id !== g.id); save(); closeSheet(); renderGoals(); } };
@@ -468,7 +509,7 @@ $('addGoal').onclick = () => goalSheet(null);
 function levelSheet(m) {
   const cur = S.muscles[m] || 0;
   openSheet(`<h2>${m}</h2><div class="levels">${LEVELS.map(([n, c], i) => `<button data-l="${i}" class="${i === cur ? 'cur' : ''}"><i style="background:${c}"></i>${n}</button>`).join('')}</div>`, el => {
-    el.querySelectorAll('[data-l]').forEach(b => b.onclick = () => { S.muscles[m] = +b.dataset.l; save(); closeSheet(); buzz(10); renderBody(); renderCard(); });
+    el.querySelectorAll('[data-l]').forEach(b => b.onclick = () => { S.muscles[m] = +b.dataset.l; save(); closeSheet(); buzz(10); renderBody(); renderCard(); afterChange(); });
   });
 }
 
@@ -482,7 +523,7 @@ function quitSheet() {
       const n = el.querySelector('#qName').value.trim(), t = new Date(el.querySelector('#qSince').value).getTime();
       if (n) q.name = n;
       if (!isNaN(t) && t <= Date.now()) { if (t > q.since) q.best = Math.max(q.best || 0, t - q.since); q.since = t; }
-      save(); closeSheet(); renderQuit();
+      save(); closeSheet(); renderQuit(); afterChange();
     };
   });
 }
@@ -492,21 +533,217 @@ $('who').onclick = () => {
   });
 };
 
+
+/* ------------------------------------------------------------------ game layer: bosses, coins, trophies, locker */
+const COIN_SM = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="#ffb020"/><circle cx="12" cy="12" r="7.6" fill="#ffd23f"/></svg>';
+const TROPHY = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 3h10v3h3a1 1 0 011 1v2a5 5 0 01-4.6 5A5.5 5.5 0 0113 17v2h3v2H8v-2h3v-2a5.5 5.5 0 01-3.4-3A5 5 0 013 9V7a1 1 0 011-1h3zM5 8v1a3 3 0 002.2 2.9A9 9 0 017 9.6V8zm14 0h-2v1.6a9 9 0 01-.2 2.3A3 3 0 0019 9z"/></svg>';
+
+// Weekly bosses rotate each Monday. HP is 80% of the week's quest slots x 100, so you win by
+// doing about four out of five of your quests. Each check-in hits for 100; crits (fixed per
+// quest+day, so re-ticking can't reroll them) hit for 200.
+const BOSSES = [
+  { name: 'The Procrastinator', art: 'bosses/boss-0-procrastinator.svg', color: '#c9b8ff', taunt: 'Eh... do it tomorrow.' },
+  { name: 'Doomscroll Hydra', art: 'bosses/boss-1-hydra.svg', color: '#4fe3d4', taunt: 'Just one more video.' },
+  { name: 'Sugar Golem', art: 'bosses/boss-2-golem.svg', color: '#ff7ad9', taunt: 'Snack time. Forever.' },
+  { name: 'Snooze Wraith', art: 'bosses/boss-3-wraith.svg', color: '#9fc4ff', taunt: 'Five more minutes...' },
+  { name: 'Couch Kraken', art: 'bosses/boss-4-kraken.svg', color: '#ff8a5c', taunt: 'Stay. On. The. Couch.' },
+];
+const HIT = 100, CRIT_CHANCE = 0.15, BOSS_COINS = 250;
+const weekStart = (d = new Date()) => { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
+const weekIndex = ws => Math.round((ws - new Date(2024, 0, 1)) / (7 * 864e5));   // 2024-01-01 was a Monday
+const hash01 = str => { let h = 2166136261; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0) / 4294967296; };
+const hitOf = (h, k) => (hash01(`${h.id}|${k}`) < CRIT_CHANCE ? HIT * 2 : HIT);
+function bossState(d = new Date()) {
+  const ws = weekStart(d), key = ymd(ws), idx = ((weekIndex(ws) % BOSSES.length) + BOSSES.length) % BOSSES.length;
+  let slots = 0, dmg = 0, hits = 0, crits = 0;
+  for (let i = 0; i < 7; i++) {
+    const day = addDays(ws, i), k = ymd(day);
+    for (const h of S.habits) {
+      if (due(h, day)) slots++;
+      if (h.log[k]) { const v = hitOf(h, k); dmg += v; hits++; if (v > HIT) crits++; }
+    }
+  }
+  const maxHp = Math.max(0, Math.round((slots * HIT * 0.8) / 50) * 50);
+  return { key, idx, boss: BOSSES[idx], maxHp, hp: Math.max(0, maxHp - dmg), dmg, hits, crits, end: addDays(ws, 7) };
+}
+function renderBoss() {
+  const b = bossState(), el = $('boss');
+  if (!b.maxHp) {
+    el.className = 'boss empty'; el.style.removeProperty('--boss');
+    el.innerHTML = `<div><span class="label">Weekly boss</span><div class="bossname">No boss yet</div><div class="taunt">Add a quest to summon this week's boss.</div></div>`;
+    return;
+  }
+  const down = b.hp === 0 || !!S.bossWins[b.key], left = Math.ceil((b.end - Date.now()) / 864e5), pct = down ? 0 : (b.hp / b.maxHp) * 100;   // a win is permanent
+  el.className = `boss${down ? ' down' : ''}`; el.style.setProperty('--boss', b.boss.color);
+  el.innerHTML = `<img src="${b.boss.art}" alt="">
+    <div><span class="label">Weekly boss · ${down ? 'new boss Monday' : left <= 1 ? 'last day!' : `${left} days left`}</span>
+    <div class="bossname">${b.boss.name}</div>
+    <div class="hp ${pct < 25 && !down ? 'low' : ''}"><i style="width:${pct.toFixed(1)}%"></i><span>${down ? 'DEFEATED' : `${b.hp} / ${b.maxHp} HP`}</span></div>
+    <div class="taunt">${down ? `You beat it. +${BOSS_COINS} coins` : `“${b.boss.taunt}”`}</div></div>`;
+  el.setAttribute('aria-label', `Weekly boss ${b.boss.name}: ${down ? 'defeated' : `${b.hp} of ${b.maxHp} HP left`}`);
+}
+function showHit(amount, crit) {
+  const el = $('boss'); if (el.classList.contains('empty')) return;
+  el.classList.remove('hit'); void el.offsetWidth; el.classList.add('hit');
+  setTimeout(() => el.classList.remove('hit'), 400);
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const t = document.createElement('span'); t.className = `dmg${crit ? ' crit' : ''}`; t.textContent = crit ? `CRIT -${amount}` : `-${amount}`;
+    el.appendChild(t); t.addEventListener('animationend', () => t.remove()); setTimeout(() => t.remove(), 1300);
+  }
+  crit ? Sound.crit() : Sound.hit();
+}
+function checkBoss() {
+  const b = bossState();
+  if (b.maxHp && b.hp === 0 && !S.bossWins[b.key]) {
+    S.bossWins[b.key] = { boss: b.idx, at: Date.now() }; save();
+    celebrate({ hd: 'Boss defeated!', from: `+${BOSS_COINS} coins`, img: b.boss.art, name: b.boss.name, color: b.boss.color, sound: 'bossDown' });
+  }
+}
+$('boss').onclick = () => {
+  const b = bossState(); if (!b.maxHp) return;
+  const wins = Object.keys(S.bossWins).length;
+  openSheet(`<h2>${b.boss.name}</h2>
+    <div style="display:grid;grid-template-columns:120px 1fr;gap:14px;align-items:center">
+      <img src="${b.boss.art}" alt="" style="width:120px;height:120px;filter:drop-shadow(0 0 16px ${b.boss.color})">
+      <div><div class="label">This week</div>
+        <p style="margin-top:8px;line-height:1.5">${b.hits} hits · ${b.crits} crits · ${b.dmg} damage<br>${b.hp ? `${b.hp} HP left` : 'Defeated'} · reward ${BOSS_COINS} coins</p></div>
+    </div>
+    <p style="margin:14px 0 6px;color:var(--dim);line-height:1.5">Every quest you finish hits the boss for 100. Some hits are crits for 200. Finish about 4 out of 5 of this week's quests to beat it before Sunday night. A new boss shows up every Monday.</p>
+    <p style="color:var(--dim)">Bosses beaten: <b style="color:var(--chalk)">${wins}</b></p>
+    <button class="go" id="bossOk">Back to the fight</button>`, el => { el.querySelector('#bossOk').onclick = closeSheet; });
+};
+$('boss').onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('boss').click(); } };
+
+// combos: quests checked within 10 seconds of each other
+let comboN = 0, comboAt = 0;
+function combo() {
+  const now = Date.now(); comboN = now - comboAt < 10000 ? comboN + 1 : 1; comboAt = now;
+  if (comboN < 2) return;
+  Sound.combo(comboN);
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const c = document.createElement('div'); c.className = 'combo'; c.textContent = `COMBO x${comboN}!`;
+    document.body.appendChild(c); c.addEventListener('animationend', () => c.remove()); setTimeout(() => c.remove(), 1200);
+  }
+  if (comboN >= 3) unlock('combo3');
+  if (comboN >= 5) unlock('combo5');
+}
+
+// trophies
+const catCount = cat => S.habits.filter(h => h.cat === cat).reduce((a, h) => a + Object.keys(h.log).length, 0);
+const logTimes = () => S.habits.flatMap(h => Object.values(h.log)).filter(v => typeof v === 'number');
+function clearDays() {
+  const days = new Set(); for (const h of S.habits) for (const k of Object.keys(h.log)) days.add(k);
+  let n = 0;
+  for (const k of days) { const d = new Date(k + 'T00:00:00'), list = S.habits.filter(h => due(h, d)); if (list.length && list.every(h => h.log[k])) n++; }
+  return n;
+}
+const quitDays = () => Math.max(S.quit.best || 0, Date.now() - S.quit.since) / 864e5;
+const peak = () => (S.peakIdx == null ? -1 : S.peakIdx);
+const ACH = [
+  { id: 'first', name: 'First Blood', desc: 'Finish your first quest', coins: 25, test: () => checkins() >= 1 },
+  { id: 'clear', name: 'Clean Sweep', desc: 'Clear every quest in a day', coins: 50, test: () => clearDays() >= 1 },
+  { id: 'combo3', name: 'Combo Starter', desc: 'Hit a 3x combo', coins: 30 },
+  { id: 'combo5', name: 'Combo King', desc: 'Hit a 5x combo', coins: 75 },
+  { id: 'streak3', name: 'Warming Up', desc: '3 perfect days in a row', coins: 50, test: () => dayStreak() >= 3 },
+  { id: 'streak7', name: 'On Fire', desc: '7 perfect days in a row', coins: 150, test: () => dayStreak() >= 7 },
+  { id: 'streak30', name: 'Unstoppable', desc: '30 perfect days in a row', coins: 600, test: () => dayStreak() >= 30 },
+  { id: 'grind50', name: 'Grinder', desc: '50 quests done', coins: 100, test: () => checkins() >= 50 },
+  { id: 'grind250', name: 'Machine', desc: '250 quests done', coins: 300, test: () => checkins() >= 250 },
+  { id: 'gym10', name: 'Gym Rat', desc: '10 Gym quests', coins: 100, test: () => catCount('Gym') >= 10 },
+  { id: 'mind10', name: 'Big Brain', desc: '10 Mind quests', coins: 100, test: () => catCount('Mind') >= 10 },
+  { id: 'health25', name: 'Health Nut', desc: '25 Health quests', coins: 100, test: () => catCount('Health') >= 25 },
+  { id: 'early', name: 'Early Bird', desc: 'Finish a quest before 8am', coins: 50, test: () => logTimes().some(t => new Date(t).getHours() < 8) },
+  { id: 'owl', name: 'Night Owl', desc: 'Finish a quest after 10pm', coins: 50, test: () => logTimes().some(t => new Date(t).getHours() >= 22) },
+  { id: 'boss1', name: 'Boss Slayer', desc: 'Beat a weekly boss', coins: 150, test: () => Object.keys(S.bossWins).length >= 1 },
+  { id: 'boss4', name: 'Raid Leader', desc: 'Beat 4 bosses', coins: 400, test: () => Object.keys(S.bossWins).length >= 4 },
+  { id: 'gold', name: 'Golden', desc: 'Reach Gold rank', coins: 150, test: () => peak() >= 9 },
+  { id: 'diamond', name: 'Diamond Hands', desc: 'Reach Diamond rank', coins: 300, test: () => peak() >= 15 },
+  { id: 'champ', name: 'Champion', desc: 'Reach Champion rank', coins: 1000, test: () => peak() >= 21 },
+  { id: 'quit7', name: 'Clean Week', desc: '7 days quit-free', coins: 100, test: () => quitDays() >= 7 },
+  { id: 'quit30', name: 'Iron Will', desc: '30 days quit-free', coins: 300, test: () => quitDays() >= 30 },
+  { id: 'shredded', name: 'Shredded', desc: 'Get a muscle to Elite', coins: 100, test: () => Object.values(S.muscles).some(v => v >= 5) },
+  { id: 'goal', name: 'Goal Getter', desc: 'Finish a goal', coins: 100, test: () => S.goals.some(g => g.pct >= 100) },
+  { id: 'drip', name: 'Drip', desc: 'Buy something in the Locker', coins: 50, test: () => S.owned.skins.length > 1 || S.owned.titles.length > 1 },
+];
+function unlock(id) {
+  if (S.ach[id]) return;
+  const a = ACH.find(x => x.id === id); if (!a) return;
+  S.ach[id] = today(); save(); showToast(a); renderCoins();
+}
+function checkAchievements() { for (const a of ACH) if (!S.ach[a.id] && a.test && a.test()) unlock(a.id); }
+
+// coins are earned from what you did (so un-ticking a quest takes its coins back) minus what you spent
+const coins = () => checkins() * 10 + clearDays() * 50 + Object.keys(S.bossWins).length * BOSS_COINS
+  + ACH.reduce((a, x) => a + (S.ach[x.id] ? x.coins : 0), 0) + S.bank - S.spent;
+let shownCoins = null;
+function renderCoins() {
+  const c = coins(); $('coinsN').textContent = c.toLocaleString();
+  if (shownCoins !== null && c > shownCoins) { const el = $('coins'); el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
+  shownCoins = c;
+  if ($('v-locker').classList.contains('on')) $('walletN').textContent = c.toLocaleString();
+}
+$('coins').onclick = () => document.querySelector('.nav button[data-v=locker]').click();
+
+// achievement toasts queue up
+const toasts = []; let toastBusy = false;
+function showToast(a) { toasts.push(a); if (!toastBusy) nextToast(); }
+function nextToast() {
+  const a = toasts.shift(), el = $('toast');
+  if (!a) { toastBusy = false; return; }
+  toastBusy = true;
+  el.innerHTML = `<div class="medal">${TROPHY}</div><div><span class="label">Achievement unlocked</span><b>${esc(a.name)}</b><small>${esc(a.desc)} · +${a.coins} coins</small></div>`;
+  el.classList.add('show'); Sound.achieve(); buzz([10, 30, 10]);
+  setTimeout(() => { el.classList.remove('show'); setTimeout(nextToast, 420); }, 2800);
+}
+
+// locker: card skins and titles
+const SKINS = [['default', 'Standard', 0], ['circuit', 'Circuit', 350], ['holo', 'Holo', 500], ['galaxy', 'Galaxy', 600], ['inferno', 'Inferno', 750]];
+const TITLES = [['Rookie', 0], ['Grinder', 100], ['Beast Mode', 150], ['No Days Off', 200], ['Main Character', 250], ['Built Different', 300], ['Final Boss', 500]];
+function renderLocker() {
+  const c = coins();
+  $('walletN').textContent = c.toLocaleString();
+  $('skins').innerHTML = SKINS.map(([id, name, price]) => {
+    const own = S.owned.skins.includes(id), eq = S.equip.skin === id;
+    return `<button class="item${eq ? ' eq' : ''}${!own && c < price ? ' locked' : ''}" data-skin="${id}" data-price="${price}">
+      <div class="pv${id === 'default' ? '' : ' skin-' + id}"></div><div class="nm">${name}</div>
+      <span class="buy${eq ? ' on' : own ? ' own' : ''}">${eq ? 'Equipped' : own ? 'Tap to equip' : COIN_SM + price}</span></button>`;
+  }).join('');
+  $('titles').innerHTML = TITLES.map(([t, price]) => {
+    const own = S.owned.titles.includes(t), eq = S.equip.title === t;
+    return `<button class="${eq ? 'eq' : own ? 'own' : ''}" data-title="${t}" data-price="${price}">${t}${own ? '' : `<small>${COIN_SM}${price}</small>`}</button>`;
+  }).join('');
+  const got = ACH.filter(a => S.ach[a.id]).length;
+  $('trophyCount').textContent = `${got}/${ACH.length}`;
+  $('trophies').innerHTML = ACH.map(a => `<div class="trophy${S.ach[a.id] ? '' : ' locked'}"><div class="medal">${TROPHY}</div><b>${esc(a.name)}</b><small>${esc(a.desc)}<br>+${a.coins} coins</small></div>`).join('');
+  $('skins').querySelectorAll('[data-skin]').forEach(b => b.onclick = () => shop('skins', 'skin', b.dataset.skin, +b.dataset.price, b));
+  $('titles').querySelectorAll('[data-title]').forEach(b => b.onclick = () => shop('titles', 'title', b.dataset.title, +b.dataset.price, b));
+}
+function shop(list, slot, id, price, btn) {
+  if (!S.owned[list].includes(id)) {
+    if (coins() < price) { Sound.nope(); btn.classList.remove('hit'); void btn.offsetWidth; btn.style.animation = 'shake .35s'; setTimeout(() => (btn.style.animation = ''), 400); return; }
+    if (!confirm(`Buy ${id === 'default' ? 'this' : `"${slot === 'skin' ? SKINS.find(x => x[0] === id)[1] : id}"`} for ${price} coins?`)) return;
+    S.spent += price; S.owned[list].push(id); Sound.buy(); buzz([10, 40, 10]);
+  } else Sound.tap();
+  S.equip[slot] = id; save(); renderLocker(); renderCard(); afterChange();
+}
+function afterChange() { checkBoss(); checkAchievements(); renderCoins(); if ($('v-locker').classList.contains('on')) renderLocker(); }
+
 /* ------------------------------------------------------------------ nav + boot */
 document.querySelectorAll('.nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('.nav button').forEach(x => { x.classList.toggle('on', x === b); if (x === b) x.setAttribute('aria-current', 'page'); else x.removeAttribute('aria-current'); });
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === 'v-' + b.dataset.v));
   if (b.dataset.v === 'stats') renderStats();
+  if (b.dataset.v === 'locker') renderLocker();
   Sound.tap(); scrollTo(0, 0);
 });
 // Android back button: returns true when it handled the press (so the app stays open)
 window.levelupBack = () => {
-  if ($('rankup').classList.contains('open')) { $('rankup').classList.remove('open'); return true; }
+  if ($('rankup').classList.contains('open')) { nextMoment(); return true; }
   if ($('sheetbg').classList.contains('open')) { closeSheet(); return true; }
   if (!$('v-home').classList.contains('on')) { document.querySelector('.nav button[data-v=home]').click(); return true; }
   return false;
 };
-function renderAll() { renderCard(); renderHabits(); renderGoals(); if ($('v-stats').classList.contains('on')) renderStats(); }
+function renderAll() { renderCard(); renderBoss(); renderHabits(); renderGoals(); if ($('v-stats').classList.contains('on')) renderStats(); afterChange(); }
 renderBody(); renderAll(); save();
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
 // a new day while the app stays open (or comes back from the background): redraw so "today" moves
