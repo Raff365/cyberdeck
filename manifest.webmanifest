@@ -2,7 +2,6 @@
   "name": "LEVEL UP",
   "short_name": "LEVEL UP",
   "description": "Score your real life like a player card. Check off habits, raise your OVR, rank up.",
-  "id": "./",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

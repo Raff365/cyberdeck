@@ -14,12 +14,13 @@ const TIERS = [
 const CRESTS = ['iron', 'bronze', 'silver', 'gold', 'platinum', 'diamond', 'master', 'champion'].map((n, i) => `ranks/rank-${i}-${n}.svg`);
 const DIV = ['I', 'II', 'III'], STEPS = TIERS.length * 3, LO = 40, HI = 99, STEP = (HI - LO) / STEPS;
 
-// Muscle levels: ordinal ramp, one hue, validated with the dataviz palette checker against the
-// panel (#15181b): monotone lightness, visible step gaps, dimmest step at 2.13:1.
+// Muscle levels are ordered, so they get a one-hue ramp that brightens with level (gold: earned,
+// not flesh). Validated with the dataviz palette checker against the panel (#15181b): monotone
+// lightness, every step visibly apart, dimmest step at 2.64:1. Untrained sits outside the ramp.
 const LEVELS = [
-  ['Untrained', '#2f343b'],
-  ['Beginner', '#8c2a3a'], ['Intermediate', '#a93344'], ['Experienced', '#c63e4f'],
-  ['Advanced', '#e0525d'], ['Elite', '#f47672'], ['Champion', '#ffa595'],
+  ['Untrained', '#3a4048'],
+  ['Beginner', '#7a5418'], ['Intermediate', '#9a6a1c'], ['Experienced', '#b98322'],
+  ['Advanced', '#d69e2e'], ['Elite', '#edbb45'], ['Champion', '#ffd977'],
 ];
 // body-data slug -> muscle group (null = not a trainable muscle, drawn as body)
 const GROUP = {
@@ -28,7 +29,7 @@ const GROUP = {
   gluteal: 'Glutes', quadriceps: 'Quads', hamstring: 'Hamstrings', adductors: 'Adductors', calves: 'Calves', tibialis: 'Calves',
 };
 const MUSCLES = ['Chest', 'Shoulders', 'Biceps', 'Triceps', 'Forearms', 'Abs', 'Obliques', 'Traps', 'Upper back', 'Lower back', 'Glutes', 'Quads', 'Hamstrings', 'Adductors', 'Calves'];
-const BODY_FILL = { head: '#5b6169', hair: '#2a2d31', neck: '#4a5058', hands: '#5b6169', feet: '#5b6169', knees: '#454a52', ankles: '#454a52' };
+const BODY_FILL = { head: '#2a2f35', hair: '#1f2226', neck: '#262a30', hands: '#2a2f35', feet: '#2a2f35', knees: '#23272c', ankles: '#23272c' };
 const VIEWBOX = { front: '39 86 650 1275', back: '759 87 650 1275' };
 
 /* ------------------------------------------------------------------ dates */
@@ -54,7 +55,7 @@ function seed() {
     quit: { name: 'Doomscrolling', since: Date.now(), best: 0 },
     muscles: {},
     hm: null,
-    rankIdx: null,
+    peakIdx: null,
   };
 }
 // One-time carry-over from the first prototype (localStorage key lockin.v1).
@@ -119,8 +120,15 @@ function dayStreak() {   // consecutive days where every habit due was done
 }
 const checkins = () => S.habits.reduce((a, h) => a + Object.keys(h.log).length, 0);
 const toRating = r => Math.round(LO + r * (HI - LO));
+// How much of the 14-day window has history: day 1 counts 1/14, a full fortnight counts fully.
+function confidence() {
+  if (!S.habits.length) return 0;
+  const oldest = S.habits.reduce((a, h) => (h.created < a ? h.created : a), today());
+  const age = Math.round((new Date(today() + 'T00:00:00') - new Date(oldest + 'T00:00:00')) / 864e5) + 1;
+  return Math.min(14, Math.max(1, age)) / 14;
+}
 function ovrExact() {
-  const r = rate(S.habits, 14) || 0;
+  const r = (rate(S.habits, 14) || 0) * confidence();
   const lv = MUSCLES.reduce((a, m) => a + (S.muscles[m] || 0), 0) / (MUSCLES.length * 6);
   return Math.min(HI, LO + r * 50 + lv * 9);
 }
@@ -131,28 +139,37 @@ function rankOf(x) {
 }
 
 /* ------------------------------------------------------------------ home */
+const rankName = idx => `${TIERS[Math.floor(idx / 3)][0]} ${DIV[idx % 3]}`;
 function renderCard() {
-  const x = ovrExact(), r = rankOf(x);
-  document.documentElement.style.setProperty('--rank', TIERS[r.tier][1]);
-  $('ovr').textContent = Math.floor(x);
-  $('rankname').textContent = r.name;
-  $('rankbar').style.width = (r.into * 100).toFixed(1) + '%';
-  $('ranknext').textContent = r.next ? `${Math.max(0.1, r.need).toFixed(1)} OVR to ${r.next}` : 'Top rank';
-  $('crest').src = CRESTS[r.tier]; $('crest').alt = `${TIERS[r.tier][0]} crest`;
-  $('who').textContent = S.user;
-  const cells = CATS.map(([cat, ab]) => {
-    const list = S.habits.filter(h => h.cat === cat), v = list.length ? rate(list, 14) : null;
-    return `<div class="attr"><b class="${v === null ? 'gap' : ''}">${v === null ? '–' : toRating(v)}</b><span class="label">${ab}</span></div>`;
-  });
-  cells.push(`<div class="attr"><b class="stk">${dayStreak()}</b><span class="label">Streak</span></div>`);
-  $('attrs').innerHTML = cells.join('');
-  if (S.rankIdx === null || S.rankIdx === undefined) { S.rankIdx = r.idx; save(); }
-  else if (r.idx > S.rankIdx) { S.rankIdx = r.idx; save(); rankUp(r); }
-  else if (r.idx < S.rankIdx) { S.rankIdx = r.idx; save(); }
+  const x = ovrExact(), r = rankOf(x), placing = checkins() === 0;
+  document.documentElement.style.setProperty('--rank', placing ? '#9c988f' : TIERS[r.tier][1]);
+  $('card').classList.toggle('placing', placing);
+  $('ovr').textContent = placing ? '?' : Math.floor(x);
+  $('rankname').textContent = placing ? 'Unranked' : r.name;
+  $('ring').style.strokeDasharray = `${placing ? 0 : (r.into * 100).toFixed(1)} 100`;
+  $('ring').style.opacity = placing || r.into < 0.005 ? 0 : 1;   // a zero-length round cap would draw a stray dot
+  $('ranknext').textContent = placing ? 'Check off a habit to start placement' : r.next ? `${Math.max(0.1, r.need).toFixed(1)} OVR to ${r.next}` : 'Top rank';
+  $('crest').src = CRESTS[r.tier]; $('crest').alt = placing ? 'Unranked' : `${TIERS[r.tier][0]} crest`;
+  $('who').textContent = S.user; $('who').setAttribute('aria-label', `${S.user}, edit name`);
+  const ds = dayStreak();
+  $('streak').hidden = !ds; $('streakN').textContent = ds; $('streak').setAttribute('aria-label', `${ds} perfect ${ds === 1 ? 'day' : 'days'} in a row`);
+  const used = CATS.filter(([c]) => S.habits.some(h => h.cat === c)), conf = confidence();
+  $('attrs').style.setProperty('--cols', Math.max(1, Math.min(3, used.length)));
+  $('attrs').hidden = !used.length;
+  $('attrs').innerHTML = used.map(([cat, ab]) => {
+    const v = rate(S.habits.filter(h => h.cat === cat), 14);
+    return `<div class="attr"><b class="${v === null ? 'gap' : ''}">${v === null ? '--' : toRating(v * conf)}</b><span class="label">${ab}</span></div>`;
+  }).join('');
+  if (placing) return;
+  // celebrate only a new personal-best rank, never a rank you already reached
+  if (S.peakIdx === null || S.peakIdx === undefined) { S.peakIdx = r.idx; save(); }
+  else if (r.idx > S.peakIdx) { const from = S.peakIdx; S.peakIdx = r.idx; save(); rankUp(r, from); }
 }
-function rankUp(r) {
+function rankUp(r, from) {
   $('rankupImg').src = CRESTS[r.tier]; $('rankupName').textContent = r.name;
+  $('rankupFrom').textContent = `${rankName(from)} \u2192 ${r.name}`;
   $('rankup').classList.add('open'); buzz([20, 40, 60]);
+  setTimeout(() => $('rankupClose').focus(), 30);
 }
 $('rankupClose').onclick = () => $('rankup').classList.remove('open');
 
@@ -165,7 +182,8 @@ function renderHabits() {
   const row = (h, isDue) => {
     const on = !!h.log[k], st = streak(h);
     const sched = h.days.length === 7 ? 'Every day' : h.days.map(d => DAY_NAME[d]).join(' ');
-    return `<div class="habit ${on ? 'on' : ''}" data-h="${h.id}" role="checkbox" aria-checked="${on}" tabindex="0" ${isDue ? '' : 'style="opacity:.5"'}>
+    const ctl = editing ? '' : `role="checkbox" aria-checked="${on}" tabindex="0"`;
+    return `<div class="habit ${on ? 'on' : ''} ${isDue ? '' : 'offday'}" data-h="${h.id}" ${ctl}>
       <div class="grow"><div class="nm">${esc(h.name)}</div><div class="meta">${esc(h.cat)} · ${isDue ? sched : 'Off today'}</div></div>
       ${st ? `<div class="stk">${st}<small>STREAK</small></div>` : ''}
       <div class="box">${CHECK}</div>
@@ -180,12 +198,22 @@ function renderHabits() {
   el.querySelectorAll('.habit').forEach(r => {
     const toggle = () => {
       if (editing) return;
-      const h = S.habits.find(x => x.id === r.dataset.h);
-      if (h.log[k]) delete h.log[k]; else { h.log[k] = true; buzz(12); }
+      const h = S.habits.find(x => x.id === r.dataset.h), key = today(), before = ovrExact(), adding = !h.log[key];
+      if (adding) { h.log[key] = true; buzz(12); } else delete h.log[key];
       save(); renderAll();
+      const row = $('habits').querySelector(`[data-h="${h.id}"]`);
+      if (row) {
+        row.focus({ preventScroll: true });
+        const delta = ovrExact() - before;
+        if (adding && delta >= 0.05) {
+          const tag = document.createElement('span'); tag.className = 'delta'; tag.textContent = `+${delta.toFixed(1)} OVR`;
+          row.appendChild(tag); tag.addEventListener('animationend', () => tag.remove());
+          setTimeout(() => tag.remove(), 1200);
+        }
+      }
     };
     r.onclick = e => { if (!e.target.dataset.rm) toggle(); };
-    r.onkeydown = e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(); } };
+    r.onkeydown = e => { if (e.target !== r) return; if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(); } };
   });
   el.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => {
     const h = S.habits.find(x => x.id === b.dataset.rm);
@@ -198,7 +226,7 @@ $('editHabits').onclick = () => { editing = !editing; renderHabits(); };
 function renderGoals() {
   const el = $('goals');
   el.innerHTML = S.goals.length ? S.goals.map(g => {
-    const left = g.date ? Math.ceil((new Date(g.date + 'T00:00:00') - new Date(today() + 'T00:00:00')) / 864e5) : null;
+    const left = g.date ? Math.round((new Date(g.date + 'T00:00:00') - new Date(today() + 'T00:00:00')) / 864e5) : null;
     const when = g.date ? `${fmtDate(g.date, { day: 'numeric', month: 'long', year: 'numeric' })}${left !== null ? ` · ${left > 0 ? left + ' days left' : left === 0 ? 'due today' : Math.abs(left) + ' days over'}` : ''}` : 'No date';
     return `<div class="goal ${g.pct >= 100 ? 'done' : ''}" data-g="${g.id}" role="button" tabindex="0">
       <div><div class="nm">${esc(g.name)}</div><div class="d">${when}</div></div>
@@ -212,19 +240,19 @@ function renderGoals() {
 function bodySVG(side) {
   const paths = BODY[side].map(([slug, d]) => {
     const g = GROUP[slug];
-    if (!g) return `<path d="${d}" fill="${BODY_FILL[slug] || '#4a5058'}"/>`;
+    if (!g) return `<path d="${d}" fill="${BODY_FILL[slug] || '#262a30'}"/>`;
     const lv = S.muscles[g] || 0;
     return `<path class="mus" data-m="${g}" d="${d}" fill="${LEVELS[lv][1]}"><title>${g}: ${LEVELS[lv][0]}</title></path>`;
   }).join('');
   return `<svg viewBox="${VIEWBOX[side]}" role="img" aria-label="${side} muscle map">
-    <path d="${BODY.outline[side]}" fill="#22262b" stroke="#4a5058" stroke-width="1.2" vector-effect="non-scaling-stroke"/>
+    <path d="${BODY.outline[side]}" fill="#1a1d21" stroke="#4a5058" stroke-width="1.2" vector-effect="non-scaling-stroke"/>
     <g stroke="#0f1113" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linejoin="round">${paths}</g></svg>`;
 }
 function renderBody() {
   $('bodies').innerHTML = ['front', 'back'].map(s => `<div class="fig">${bodySVG(s)}<div class="label">${s}</div></div>`).join('');
   $('mkey').innerHTML = LEVELS.map(([n, c]) => `<span><i style="background:${c}"></i>${n}</span>`).join('');
   $('mtable').innerHTML = MUSCLES.map(m => { const lv = S.muscles[m] || 0; return `<tr data-m="${m}" tabindex="0"><td>${m}</td><td><i style="background:${LEVELS[lv][1]}"></i>${LEVELS[lv][0]}</td></tr>`; }).join('');
-  document.querySelectorAll('#v-body [data-m]').forEach(el => { el.onclick = () => levelSheet(el.dataset.m); el.onkeydown = e => { if (e.key === 'Enter') levelSheet(el.dataset.m); }; });
+  document.querySelectorAll('#v-body [data-m]').forEach(el => { el.onclick = () => levelSheet(el.dataset.m); el.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); levelSheet(el.dataset.m); } }; });
 }
 
 /* ------------------------------------------------------------------ stats */
@@ -236,7 +264,7 @@ function renderStats() {
     if (!S.habits.some(h => h.id === S.hm)) S.hm = S.habits[0].id;
     sel.innerHTML = S.habits.map(h => `<option value="${h.id}" ${h.id === S.hm ? 'selected' : ''}>${esc(h.name)}</option>`).join('');
     const h = S.habits.find(x => x.id === S.hm), W = 17, now = new Date(), tk = today();
-    const start = addDays(now, -(W * 7 - 1) - (6 - now.getDay()));
+    const start = addDays(now, -(W * 7 - 1) + (6 - now.getDay()));   // Sunday, 17 weeks back; last column is this week
     let cells = '', n = 0, done = 0, months = '';
     for (let w = 0; w < W; w++) {
       const first = addDays(start, w * 7);
@@ -279,14 +307,36 @@ $('quitReset').onclick = () => {
   S.quit.best = Math.max(S.quit.best || 0, Date.now() - S.quit.since); S.quit.since = Date.now(); save(); renderQuit();
 };
 $('quitEdit').onclick = () => quitSheet();
+$('export').onclick = () => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(S, null, 1)], { type: 'application/json' }));
+  a.download = `levelup-${today()}.json`; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+$('import').onclick = () => $('importFile').click();
+$('importFile').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  try {
+    const x = JSON.parse(await f.text());
+    if (!x || !Array.isArray(x.habits)) throw new Error('not a LEVEL UP backup');
+    if (!confirm('Replace everything on this phone with this backup?')) return;
+    localStorage.setItem(KEY, JSON.stringify(x)); location.reload();
+  } catch (err) { alert(`Could not import: ${err.message}`); }
+};
 $('erase').onclick = () => { if (confirm('Erase every habit, goal and level on this phone? This cannot be undone.')) { S = seed(); save(); renderBody(); renderAll(); } };
 
 /* ------------------------------------------------------------------ sheets */
+let prevFocus = null;
 function openSheet(html, bind) {
-  $('sheet').innerHTML = html; $('sheetbg').classList.add('open'); bind($('sheet'));
+  prevFocus = document.activeElement;
+  $('sheet').innerHTML = html.replace('<h2>', '<h2 id="sheetTitle">'); $('sheetbg').classList.add('open'); bind($('sheet'));
   const first = $('sheet').querySelector('input, select, button'); if (first) setTimeout(() => first.focus(), 50);
 }
-const closeSheet = () => $('sheetbg').classList.remove('open');
+const closeSheet = () => {
+  if (!$('sheetbg').classList.contains('open')) return;
+  $('sheetbg').classList.remove('open');
+  if (prevFocus && prevFocus.isConnected) prevFocus.focus({ preventScroll: true });
+};
 $('sheetbg').onclick = e => { if (e.target === $('sheetbg')) closeSheet(); };
 addEventListener('keydown', e => { if (e.key === 'Escape') { closeSheet(); $('rankup').classList.remove('open'); } });
 
@@ -344,11 +394,12 @@ function quitSheet() {
   const q = S.quit, local = new Date(q.since - new Date(q.since).getTimezoneOffset() * 6e4).toISOString().slice(0, 16);
   openSheet(`<h2>Quit tracker</h2>
     <label class="field"><span class="label">What you are quitting</span><input id="qName" maxlength="30" value="${esc(q.name)}" autocomplete="off"></label>
-    <label class="field"><span class="label">Quit since</span><input id="qSince" type="datetime-local" value="${local}"></label>
+    <label class="field"><span class="label">Quit since</span><input id="qSince" type="datetime-local" value="${local}" max="${new Date(Date.now() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 16)}"></label>
     <button class="go" id="qSave">Save</button>`, el => {
     el.querySelector('#qSave').onclick = () => {
       const n = el.querySelector('#qName').value.trim(), t = new Date(el.querySelector('#qSince').value).getTime();
-      if (n) q.name = n; if (!isNaN(t) && t <= Date.now()) q.since = t;
+      if (n) q.name = n;
+      if (!isNaN(t) && t <= Date.now()) { if (t > q.since) q.best = Math.max(q.best || 0, t - q.since); q.since = t; }
       save(); closeSheet(); renderQuit();
     };
   });
@@ -361,15 +412,17 @@ $('who').onclick = () => {
 
 /* ------------------------------------------------------------------ nav + boot */
 document.querySelectorAll('.nav button').forEach(b => b.onclick = () => {
-  document.querySelectorAll('.nav button').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('.nav button').forEach(x => { x.classList.toggle('on', x === b); if (x === b) x.setAttribute('aria-current', 'page'); else x.removeAttribute('aria-current'); });
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === 'v-' + b.dataset.v));
   if (b.dataset.v === 'stats') renderStats();
   scrollTo(0, 0);
 });
-function renderAll() { renderCard(); renderHabits(); renderGoals(); renderStats(); }
+function renderAll() { renderCard(); renderHabits(); renderGoals(); if ($('v-stats').classList.contains('on')) renderStats(); }
 renderBody(); renderAll(); save();
-setInterval(() => { if ($('v-stats').classList.contains('on')) renderQuit(); }, 30000);
-// a new day while the app stays open: redraw so "today" moves
+try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
+// a new day while the app stays open (or comes back from the background): redraw so "today" moves
 let lastDay = today();
-document.addEventListener('visibilitychange', () => { if (!document.hidden && today() !== lastDay) { lastDay = today(); renderAll(); } });
+const rollover = () => { if (today() !== lastDay) { lastDay = today(); renderAll(); return true; } return false; };
+setInterval(() => { if (!rollover() && $('v-stats').classList.contains('on')) renderQuit(); }, 30000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) rollover(); });
 if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));

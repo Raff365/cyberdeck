@@ -185,10 +185,11 @@ const TIERS = [
     // crown: three spikes on a band, small ruby tips
     ...part([[62, 34], [70, 6], [82, 26], [100, -2], [118, 26], [130, 6], [138, 34]], 'gold', { bevel: 4, depth: 5, apex: 6, apexAt: [100, 24] }),
     ...[[70, 9], [100, 2], [130, 9]].flatMap(([x, y]) => part(regular(x, y + 2, 6, 4, 0), 'ruby', { bevel: 2, depth: 2, apex: 3 })),
-    ...part(RHOMB(100, 100, 60, 78), 'goldDk', { bevel: 8, depth: 10, plateau: 'flat' }),
-    ...part(RHOMB(100, 100, 48, 64), 'gold', { bevel: 6, depth: 6, plateau: 'flat' }),
-    ...part(regular(100, 100, 34, 6, -Math.PI / 2, 46), 'rubyDk', { bevel: 5, depth: 5, plateau: 'flat' }),
-    ...part(regular(100, 100, 25, 6, -Math.PI / 2, 35), 'ruby', { bevel: 4, depth: 3, apex: 7, table: 9 }),
+    // ruby body so the top rank never reads as Gold; gold stays in the crown, wings and setting
+    ...part(RHOMB(100, 100, 60, 78), 'rubyDk', { bevel: 8, depth: 10, plateau: 'flat' }),
+    ...part(RHOMB(100, 100, 48, 64), 'ruby', { bevel: 6, depth: 6, plateau: 'flat' }),
+    ...part(regular(100, 100, 30, 6, -Math.PI / 2, 41), 'goldDk', { bevel: 5, depth: 5, plateau: 'flat' }),
+    ...part(regular(100, 100, 22, 6, -Math.PI / 2, 31), 'gem', { bevel: 4, depth: 3, apex: 7, table: 8 }),
   ] },
 ];
 
