@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- LimitService only needs to know which app's window came to the front: the package name is on the event,
+     so it never reads window content (canRetrieveWindowContent="false"). No packageNames filter: it has to
+     see every app to know which one is in front. notificationTimeout 0: with a delay Android merges window
+     changes that come close together and delivers only the last, which can drop the event of the app that
+     just opened (its keyboard or a dialog follows within milliseconds). -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/screen_service_description"
+    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault"
+    android:notificationTimeout="0"
+    android:canRetrieveWindowContent="false" />

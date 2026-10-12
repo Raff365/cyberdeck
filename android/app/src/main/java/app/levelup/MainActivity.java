@@ -1,6 +1,7 @@
 package app.levelup;
 
 import android.app.Activity;
+import android.content.ComponentName;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -11,6 +12,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.provider.Settings;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -41,6 +43,8 @@ public class MainActivity extends Activity {
     private static final int PICK_FILE = 1;
     private static final int GROUND = Color.rgb(0x0c, 0x0a, 0x1d);
 
+    static final String OPEN = "levelup.open";   // "workout": sent by the screen-time block screen
+
     private static final long CHECK_EVERY_MS = 15L * 60 * 1000;   // auto-check on open, at most every 15 minutes
 
     private WebView web;
@@ -51,6 +55,7 @@ public class MainActivity extends Activity {
     private Updater.Release available;        // a newer build we know about
     private boolean resumed;
     private File readyApk;                    // downloaded and checked, waiting for the app to be on screen
+    private boolean openWorkout;              // TRAIN INSTEAD was tapped; open the workout once the page is ready
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -82,6 +87,10 @@ public class MainActivity extends Activity {
             public void onPageFinished(WebView view, String url) {
                 pageReady = true;
                 if (available != null) announce(available); else maybeCheck(false);
+                if (openWorkout) {
+                    openWorkout = false;
+                    js("window.levelupOpenWorkout && window.levelupOpenWorkout()");
+                }
             }
 
             @Override
@@ -116,7 +125,18 @@ public class MainActivity extends Activity {
         });
 
         web.addJavascriptInterface(new Bridge(), "LevelUpAndroid");
+        // only a fresh start from the block screen: a task recreated after process death, or reopened from Recents,
+        // still carries the extra in its root intent and must not open the workout again
+        openWorkout = savedInstanceState == null && (getIntent().getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) == 0
+                && "workout".equals(getIntent().getStringExtra(OPEN));
         web.loadUrl(START);
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        if (!"workout".equals(intent.getStringExtra(OPEN))) return;
+        if (pageReady) js("window.levelupOpenWorkout && window.levelupOpenWorkout()"); else openWorkout = true;
     }
 
     @Override
@@ -161,6 +181,8 @@ public class MainActivity extends Activity {
         } else if (pageReady) {
             maybeCheck(false);
         }
+        // back from Settings (Usage access, the blocker) or from a limited app: the numbers may have moved
+        if (pageReady) js("window.levelupScreenTimeChanged && window.levelupScreenTimeChanged()");
     }
 
     // ------------------------------------------------------------------ updates
@@ -331,6 +353,65 @@ public class MainActivity extends Activity {
                 else getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             });
         }
+
+        // ---- screen-time limit: JSON strings in and out (see ScreenTime)
+        @JavascriptInterface
+        public String screenTimeStatus() {
+            return ScreenTime.status(MainActivity.this);
+        }
+
+        @JavascriptInterface
+        public String screenTimeToday(String json) {
+            return ScreenTime.todayJson(MainActivity.this, json);
+        }
+
+        @JavascriptInterface
+        public String screenTimeDays(String json) {
+            return ScreenTime.daysJson(MainActivity.this, json);
+        }
+
+        @JavascriptInterface
+        public String screenTimeApps() {
+            return ScreenTime.appsJson(MainActivity.this);
+        }
+
+        @JavascriptInterface
+        public void setScreenTimeConfig(String json) {
+            ScreenTime.setConfig(MainActivity.this, json);
+        }
+
+        @JavascriptInterface
+        public boolean openScreenTimeSettings(String which) {
+            return openSettings(which);
+        }
+    }
+
+    /** "usage" | "accessibility" | "appinfo": the most specific screen that opens, else Settings itself. False: nothing opened. */
+    private boolean openSettings(String which) {
+        String pkg = getPackageName();
+        java.util.List<Intent> tries = new java.util.ArrayList<>();
+        if ("usage".equals(which)) {
+            // the per-app Usage access page exists in AOSP Settings from Android 10
+            if (Build.VERSION.SDK_INT >= 29) tries.add(new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS, Uri.fromParts("package", pkg, null)));
+            tries.add(new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS));
+        } else if ("accessibility".equals(which)) {
+            // unofficial extra: some Settings builds scroll to and highlight our row; ignored elsewhere
+            tries.add(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                    .putExtra(":settings:fragment_args_key", new ComponentName(this, LimitService.class).flattenToString()));
+        } else if ("appinfo".equals(which)) {
+            tries.add(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", pkg, null)));
+        } else {
+            return false;
+        }
+        tries.add(new Intent(Settings.ACTION_SETTINGS));
+        for (Intent i : tries) {
+            try {
+                startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                return true;
+            } catch (Exception ignored) {
+            }
+        }
+        return false;
     }
 
     private String write(String name, String json) throws Exception {

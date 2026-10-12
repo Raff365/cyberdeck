@@ -72,6 +72,7 @@ function seed() {
     owned: { skins: ['default'], titles: ['Rookie'] }, equip: { skin: 'default', title: 'Rookie' },
     workout: null, workouts: [], kit: 'home', units: /-US$/i.test(navigator.language || '') ? 'lb' : 'kg', woHint: false,
     muscleCap: {}, woPaid: {},
+    screen: { plan: [], days: {} },
   };
 }
 // One-time carry-over from the first prototype (localStorage key lockin.v1).
@@ -114,6 +115,34 @@ if (!S.woPaid || typeof S.woPaid !== 'object') S.woPaid = {};
 // a starting level above Experienced (3) from before workouts stays pickable after a mis-tap lowers it
 if (!S.muscleCap || typeof S.muscleCap !== 'object') S.muscleCap = {};
 for (const [m, v] of Object.entries(S.muscles || {})) if (v > 3 && !(S.muscleCap[m] >= v)) S.muscleCap[m] = Math.min(6, v | 0);
+// ...and saves from before screen time get theirs. plan: [{from, limit, apps}] sorted by from; the rule for a day is
+// the last entry with from <= that day, and at most one entry (the change waiting for tomorrow) is in the future.
+// days: {'YYYY-MM-DD': {u: limited-app minutes, t: whole phone, l: that day's limit (0 = none), f: 1 once final,
+//   o: minutes on suggested games/videos/social NOT picked (they count for coins, never for blocking)}}
+const SCR_LIMITS = [30, 45, 60, 90, 120];   // 0 = off
+const SCR_PAY = l => (l <= 30 ? 60 : l <= 45 ? 50 : l <= 60 ? 40 : l <= 90 ? 25 : 15);   // a tighter limit pays more
+const SCR_BACK = 7;                         // past days the phone can still report
+if (!S.screen || typeof S.screen !== 'object' || Array.isArray(S.screen)) S.screen = {};
+{
+  const isDay = k => typeof k === 'string' && /^\d{4}-\d\d-\d\d$/.test(k), OKL = [0, ...SCR_LIMITS], t = today();
+  S.screen.plan = (Array.isArray(S.screen.plan) ? S.screen.plan : [])
+    .filter(e => e && isDay(e.from) && Array.isArray(e.apps))
+    .map(e => ({ from: e.from, limit: OKL.includes(e.limit) ? e.limit : 60, apps: [...new Set(e.apps.filter(p => typeof p === 'string' && p && p !== 'app.levelup'))] }))
+    .sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0))
+    .filter((e, i, a) => !a[i + 1] || a[i + 1].from !== e.from);   // one entry per day, the later wins
+  const fut = S.screen.plan.filter(e => e.from > t);
+  if (fut.length > 1) S.screen.plan = S.screen.plan.filter(e => e.from <= t).concat(fut[fut.length - 1]);
+  if (!S.screen.days || typeof S.screen.days !== 'object' || Array.isArray(S.screen.days)) S.screen.days = {};
+  for (const [k, d] of Object.entries(S.screen.days)) {
+    if (!isDay(k) || !d || typeof d.u !== 'number' || !(d.u >= 0)) { delete S.screen.days[k]; continue; }
+    d.u = Math.round(d.u); d.t = typeof d.t === 'number' && d.t >= 0 ? Math.round(d.t) : 0; d.l = OKL.includes(d.l) ? d.l : 0;
+    if (typeof d.o === 'number' && d.o >= 1) d.o = Math.round(d.o); else delete d.o;
+    if (d.f !== 1 || k >= t) delete d.f;   // only past days can be final
+  }
+  // keep just enough history to know the rule for every day the phone can still report
+  const cut = ymd(addDays(new Date(), -(SCR_BACK + 1)));
+  while (S.screen.plan.length > 1 && S.screen.plan[1].from <= cut) S.screen.plan.shift();
+}
 const save =() => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -465,13 +494,20 @@ $('importFile').onchange = async e => {
     const x = JSON.parse(await f.text());
     if (!x || !Array.isArray(x.habits)) throw new Error('not a LEVEL UP backup');
     if (!confirm('Replace everything on this phone with this backup?')) return;
+    // a backup can't loosen today's screen-time limit: that waits for tomorrow, like in Screen time
+    const sx = x.screen && typeof x.screen === 'object' && !Array.isArray(x.screen) ? x.screen : {};
+    const P = (Array.isArray(sx.plan) ? sx.plan : []).filter(e => e && typeof e.from === 'string' && /^\d{4}-\d\d-\d\d$/.test(e.from) && Array.isArray(e.apps))
+      .map(e => ({ from: e.from, limit: [0, ...SCR_LIMITS].includes(e.limit) ? e.limit : 60, apps: e.apps.filter(p => typeof p === 'string' && p) }))
+      .sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
+    x.screen = { ...sx, plan: scrKeep(P) };
     localStorage.setItem(KEY, JSON.stringify(x)); location.reload();
   } catch (err) { alert(`Could not import: ${err.message}`); }
 };
 $('erase').onclick = () => {
-  if (!confirm('Erase every habit, goal and level on this phone? This cannot be undone.')) return;
+  const keep = scrKeep([]);   // today's screen-time limit stays till midnight while the blocker is on
+  if (!confirm(`Erase every habit, goal and level on this phone? This cannot be undone.${keep.length ? ' Your screen time limit stays on till midnight.' : ''}`)) return;
   $('wo').hidden = true; $('wo').classList.remove('res'); woRes = null; stopTick(); keepOn(false); woRev++;
-  S = seed(); save(); renderBody(); renderAll();
+  S = seed(); S.screen.plan = keep; save(); scrPush(); renderBody(); renderAll();   // native and JS agree on what is limited
 };
 
 /* ------------------------------------------------------------------ sheets */
@@ -693,6 +729,9 @@ const ACH = [
   { id: 'shredded', name: 'Shredded', desc: 'Get a muscle to Elite', coins: 100, test: () => MUSCLES.some(m => muscleLevel(m) >= 5) },
   { id: 'goal', name: 'Goal Getter', desc: 'Finish a goal', coins: 100, test: () => S.goals.some(g => g.pct >= 100) },
   { id: 'drip', name: 'Drip', desc: 'Buy something in the Locker', coins: 50, test: () => S.owned.skins.length > 1 || S.owned.titles.length > 1 },
+  // android: only shown where they can be earned (the Android app), or once earned
+  { id: 'scr1', name: 'Unplugged', desc: 'Finish a day under your screen limit', coins: 50, android: true, test: () => scrLedger().under >= 1 },
+  { id: 'scr7', name: 'Touch Grass', desc: '7 days in a row under your screen limit', coins: 150, android: true, test: () => scrLedger().best >= 7 },
 ];
 function unlock(id) {
   if (S.ach[id]) return;
@@ -703,7 +742,7 @@ function checkAchievements() { for (const a of ACH) if (!S.ach[a.id] && a.test &
 
 // coins are earned from what you did (so un-ticking a quest takes its coins back) minus what you spent
 const coins = () => checkins() * 10 + clearDays() * 50 + Object.keys(S.bossWins).length * BOSS_COINS
-  + ACH.reduce((a, x) => a + (S.ach[x.id] ? x.coins : 0), 0) + woLedger().coins + S.bank - S.spent;
+  + ACH.reduce((a, x) => a + (S.ach[x.id] ? x.coins : 0), 0) + woLedger().coins + scrLedger().coins + S.bank - S.spent;
 let shownCoins = null;
 function renderCoins() {
   const c = coins(); $('coinsN').textContent = c.toLocaleString();
@@ -716,14 +755,14 @@ $('coins').onclick = () => document.querySelector('.nav button[data-v=locker]').
 // achievement toasts queue up
 const toasts = []; let toastBusy = false;
 function showToast(a) { toasts.push(a); if (!toastBusy) nextToast(); }
-// icon: the workout notes pass the dumbbell, so they never look like the app-update notice
-function showNote(title, sub, icon = null) { showToast({ note: true, name: title, desc: sub, icon }); }
+// icon: the workout notes pass the dumbbell, so they never look like the app-update notice; label names the sender
+function showNote(title, sub, icon = null, label = null) { showToast({ note: true, name: title, desc: sub, icon, label }); }
 function nextToast() {
   const a = toasts.shift(), el = $('toast');
   if (!a) { toastBusy = false; return; }
   toastBusy = true;
   el.innerHTML = a.note
-    ? `<div class="medal">${a.icon || UP_ICON}</div><div><span class="label">${a.icon ? 'Workout' : 'LEVEL UP'}</span><b>${esc(a.name)}</b><small>${esc(a.desc)}</small></div>`
+    ? `<div class="medal">${a.icon || UP_ICON}</div><div><span class="label">${a.label || (a.icon ? 'Workout' : 'LEVEL UP')}</span><b>${esc(a.name)}</b><small>${esc(a.desc)}</small></div>`
     : `<div class="medal">${TROPHY}</div><div><span class="label">Achievement unlocked</span><b>${esc(a.name)}</b><small>${esc(a.desc)} · +${a.coins} coins</small></div>`;
   el.classList.add('show');
   if (a.note) Sound.tap(); else { Sound.achieve(); buzz([10, 30, 10]); }
@@ -746,9 +785,10 @@ function renderLocker() {
     const own = S.owned.titles.includes(t), eq = S.equip.title === t;
     return `<button class="${eq ? 'eq' : own ? 'own' : ''}" data-title="${t}" data-price="${price}">${t}${own ? '' : `<small>${COIN_SM}${price}</small>`}</button>`;
   }).join('');
-  const got = ACH.filter(a => S.ach[a.id]).length;
-  $('trophyCount').textContent = `${got}/${ACH.length}`;
-  $('trophies').innerHTML = ACH.map(a => `<div class="trophy${S.ach[a.id] ? '' : ' locked'}"><div class="medal">${TROPHY}</div><b>${esc(a.name)}</b><small>${esc(a.desc)}<br>+${a.coins} coins</small></div>`).join('');
+  const shown = ACH.filter(a => !a.android || scrOn() || S.ach[a.id]), got = shown.filter(a => S.ach[a.id]).length;
+  $('trophyCount').textContent = `${got}/${shown.length}`;
+  $('walletHow').textContent = `Earn coins: 10 per quest, 50 for clearing your day, up to 50 per workout, 250 per boss, ${scrOn() || scrLedger().coins > 0 ? 'up to 60 per day under your screen limit, ' : ''}plus trophies.`;
+  $('trophies').innerHTML = shown.map(a => `<div class="trophy${S.ach[a.id] ? '' : ' locked'}"><div class="medal">${TROPHY}</div><b>${esc(a.name)}</b><small>${esc(a.desc)}<br>+${a.coins} coins</small></div>`).join('');
   $('skins').querySelectorAll('[data-skin]').forEach(b => b.onclick = () => shop('skins', 'skin', b.dataset.skin, +b.dataset.price, b));
   $('titles').querySelectorAll('[data-title]').forEach(b => b.onclick = () => shop('titles', 'title', b.dataset.title, +b.dataset.price, b));
 }
@@ -793,7 +833,7 @@ if (window.LevelUpAndroid) {
   $('checkUpdate').onclick = () => { $('checkUpdate').textContent = 'Checking...'; LevelUpAndroid.checkForUpdate(); Sound.tap(); };
   try { $('appVersion').textContent = `Version ${LevelUpAndroid.version()}.`; } catch (e) {}
   // first open after an update: say so, so an update never lands silently
-  const WHATS_NEW = 'New: Start Workout, the gold bar on Home';
+  const WHATS_NEW = 'New: a screen time limit. Find it on Home';
   try {
     const v = LevelUpAndroid.version(), seen = localStorage.getItem('levelup.version');
     if (hadSave && seen !== v) showNote('Updated!', `${v.split(' ')[0]} · ${WHATS_NEW}`);
@@ -1436,6 +1476,438 @@ function woDelete(id) {   // the quest tick stays (untick it on Home); coins fro
   save(); closeSheet(); renderBody(); renderAll();
 }
 
+/* ------------------------------------------------------------------ screen time (Android app only) */
+// Native measures usage (Usage access) and blocks (an accessibility service); JS owns the plan with its commitment
+// rules and the rewards. Coins come only from S.screen.days: today is provisional, a past day is read once and frozen.
+// Fail open: if the phone can't measure usage, nothing is blocked and the card says so.
+const HOURGLASS = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h12v2h-1.2v2.6c0 1.9-1 3.6-2.6 4.6l-1.3.8 1.3.8c1.6 1 2.6 2.7 2.6 4.6V20H18v2H6v-2h1.2v-2.6c0-1.9 1-3.6 2.6-4.6l1.3-.8-1.3-.8C8.2 10.2 7.2 8.5 7.2 6.6V4H6zm3.2 2v2.6c0 .5.1 1 .3 1.4h5c.2-.4.3-.9.3-1.4V4zm2.8 9.2l-1.2.8c-1 .6-1.6 1.7-1.6 2.9V18l2.8-1.6 2.8 1.6v-1.1c0-1.2-.6-2.3-1.6-2.9z" fill="currentColor"/></svg>';
+const LOCK = '<svg class="lock" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V7.5a5 5 0 0110 0V10h1a1 1 0 011 1v9a1 1 0 01-1 1H6a1 1 0 01-1-1v-9a1 1 0 011-1zm2 0h6V7.5a3 3 0 00-6 0z" fill="currentColor"/></svg>';
+const CHEV_R = '<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const scrOn = () => !!(window.LevelUpAndroid && typeof LevelUpAndroid.screenTimeStatus === 'function');
+const scrAt = k => { let e = null; for (const p of S.screen.plan) if (p.from <= k) e = p; return e; };
+const scrNext = () => S.screen.plan.find(p => p.from > today()) || null;
+const fmtMins = m => (m < 60 ? `${m} min` : `${Math.floor(m / 60)} hr${m % 60 ? ` ${m % 60} min` : ''}`);
+const limName = l => ({ 0: 'no limit', 30: '30 min', 45: '45 min', 60: '1 hour', 90: '1½ hours', 120: '2 hours' })[l];
+const sameApps = (a, b) => a.length === b.length && a.every(p => b.includes(p));
+let scr = { st: null, now: null, apps: null, at: 0, tried: { usage: false, a11y: false } };   // live, never saved
+function scrCall(name, arg) {   // never throws; JSON in, JSON out
+  try { const r = arg === undefined ? LevelUpAndroid[name]() : LevelUpAndroid[name](JSON.stringify(arg)); return typeof r === 'string' && r ? JSON.parse(r) : r; }
+  catch (e) { return null; }
+}
+// native works out each day's rule with the same "last from <= day" rule, so tomorrow's change starts at midnight by itself
+function scrPush() {
+  if (!scrOn()) return;
+  // the whole plan (it is trimmed to ~8 days), so any clock setting finds the right rule
+  try { LevelUpAndroid.setScreenTimeConfig(JSON.stringify({ v: 1, plan: S.screen.plan })); } catch (e) {}
+}
+// the commitment survives Erase all and Import: while the blocker is on, today's rule can only get stricter, and
+// anything looser starts tomorrow (native enforces the same). P: a plan that is about to replace S.screen.plan
+function scrKeep(P) {
+  const t = today(), cur = scrAt(t);
+  if (!scrOn() || !scrLim(cur) || !(scrCall('screenTimeStatus') || {}).blocker) return P;
+  const at = k => { let e = null; for (const p of P) if (p.from <= k && (!e || p.from >= e.from)) e = p; return e; };
+  const n = at(t), nl = n ? n.limit : 0, na = n ? n.apps : [];
+  if (nl > 0 && nl <= cur.limit && cur.apps.every(p => na.includes(p))) return P;
+  const fut = P.filter(p => p.from > t), nx = fut[fut.length - 1] || n || { limit: 0, apps: [] };
+  return P.filter(p => p.from < t).concat({ from: t, limit: nl > 0 ? Math.min(nl, cur.limit) : cur.limit, apps: [...new Set([...cur.apps, ...na])] },
+    { from: ymd(addDays(new Date(), 1)), limit: nx.limit, apps: [...nx.apps] });
+}
+// a day only limits something when it has a limit and at least one app (an empty list must never pay)
+const scrLim = e => (e && e.apps.length ? e.limit : 0);
+// a finished day pays when the picked apps stayed under the limit, and unpicked time-sinks would have too
+const scrOk = d => !!d && d.f === 1 && d.l > 0 && d.u + (d.o || 0) <= d.l;
+
+let scrRev = 0, scrMemo = null;   // scrRev++ on every write to S.screen.days
+function scrLedger() {
+  const k = today();
+  if (scrMemo && scrMemo.d === S.screen.days && scrMemo.k === k && scrMemo.r === scrRev) return scrMemo.v;
+  const ks = Object.keys(S.screen.days).sort(); let coins = 0, under = 0, best = 0, run = 0, prev = null;
+  for (const k of ks) {
+    const d = S.screen.days[k], ok = scrOk(d);
+    if (ok) { coins += SCR_PAY(d.l); under++; run = prev === ymd(addDays(new Date(k + 'T12:00:00'), -1)) && run ? run + 1 : 1; best = Math.max(best, run); } else run = 0;
+    prev = ok ? k : null;
+  }
+  let now = 0;
+  for (let i = 1; i < 400; i++) { const d = S.screen.days[ymd(addDays(new Date(), -i))]; if (scrOk(d)) now++; else break; }
+  scrMemo = { d: S.screen.days, k, r: scrRev, v: { coins, under, best, now } };
+  return scrMemo.v;
+}
+
+// reads status, today and any past day not yet final. Returns false when it skipped (ran under 2s ago, unforced)
+function scrRefresh(force) {
+  if (!scrOn() || (!force && Date.now() - scr.at < 2000 && Date.now() >= scr.at)) return false;
+  scr.at = Date.now();
+  scr.st = scrCall('screenTimeStatus');
+  if (!scr.st || !scr.st.usage) { scr.now = null; return true; }
+  const t = today(), D = S.screen.days, e = scrAt(t); let changed = false;
+  const now = scrCall('screenTimeToday', { apps: e ? e.apps : [] });
+  scr.now = now && now.ok && now.day === t && typeof now.used === 'number' ? now : null;
+  if (scr.now) {
+    const rec = { u: Math.max(0, Math.round(now.used)), t: Math.max(0, Math.round(now.total || 0)), l: scrLim(e) }, o = Math.round(+now.other || 0);
+    if (o >= 1) rec.o = o;
+    if (!D[t] || D[t].u !== rec.u || D[t].t !== rec.t || D[t].l !== rec.l || (D[t].o || 0) !== (rec.o || 0) || D[t].f) { D[t] = rec; changed = true; }
+  }
+  const ask = [];
+  for (let i = 1; i <= SCR_BACK; i++) {
+    const k = ymd(addDays(new Date(), -i));
+    if (!(D[k] && D[k].f === 1)) ask.push({ day: k, apps: (scrAt(k) || S.screen.plan[0] || { apps: [] }).apps });
+  }
+  const won = [];
+  if (ask.length) {
+    const r = scrCall('screenTimeDays', { days: ask });
+    for (const q of ask) {
+      const d = r && r.ok && r.days && r.days[q.day];
+      if (!d || typeof d.used !== 'number' || (D[q.day] && D[q.day].f === 1)) continue;   // a final record is never rewritten
+      const rec = { u: Math.max(0, Math.round(d.used)), t: Math.max(0, Math.round(d.total || 0)), l: scrLim(scrAt(q.day)), f: 1 }, o = Math.round(+d.other || 0);
+      if (o >= 1) rec.o = o;
+      D[q.day] = rec; changed = true;
+      if (scrOk(rec)) won.push(q.day);
+    }
+  }
+  won.sort();
+  if (won.length === 1) {
+    const d = D[won[0]], y = won[0] === ymd(addDays(new Date(), -1));
+    showNote(`${y ? 'Yesterday' : fmtDate(won[0])}: ${d.u} of ${d.l} min`, `+${SCR_PAY(d.l)} coins for staying under`, HOURGLASS, 'Screen time');
+  } else if (won.length > 1) showNote(`${won.length} days under your limit`, `+${won.reduce((a, k) => a + SCR_PAY(D[k].l), 0)} coins`, HOURGLASS, 'Screen time');   // days over: no note
+  if (changed) { scrRev++; save(); }
+  return true;
+}
+const scrUsed = () => (scr.now ? scr.now.used : S.screen.days[today()] ? S.screen.days[today()].u : 0);
+const scrBlocker = () => !!(scr.st && scr.st.blocker);
+
+/* Home card */
+function notches(limit, left) {
+  const n = limit / 5, lit = Math.min(n, Math.ceil(Math.max(0, left) / 5));
+  return `<div class="notch${n > 12 ? ' many' : ''}" aria-hidden="true">${Array.from({ length: n }, (_, i) => `<i class="${i < lit ? 'on' : ''}${i === lit - 1 ? ' last' : ''}"></i>`).join('')}</div>`;
+}
+function nxLine(cur, nx) {
+  if (!cur || !nx) return '';
+  const parts = [];
+  if (nx.limit !== cur.limit) parts.push(nx.limit ? limName(nx.limit) : 'no limit');
+  if (nx.limit && !sameApps(nx.apps, cur.apps)) parts.push(`${nx.apps.length} ${nx.apps.length === 1 ? 'app' : 'apps'}`);
+  return parts.length ? `<div class="scr-ft nx"><span>From tomorrow: ${parts.join(', ')}</span></div>` : '';
+}
+function renderScreen() {
+  const el = $('scr');
+  delete el.dataset.retry;
+  if (!scrOn() || !scr.st) { el.hidden = true; return; }   // a browser never shows it; on the phone, wait for the first read
+  el.hidden = false;
+  const t = today(), cur = scrAt(t), nx = scrNext(), st = scr.st, slab = (b, sm) => {
+    el.className = 'scr setup';
+    el.innerHTML = `<span class="ic">${HOURGLASS}</span><span class="tx"><b>${b}</b><small>${sm}</small></span>${CHEV_R}`;
+  };
+  if (!S.screen.plan.length) { slab('Screen time limit', '1 hour a day on games and videos'); el.setAttribute('aria-label', 'Set up a screen time limit'); return; }
+  if (!st.usage) { slab('Screen time', "Can't see your screen time, so nothing gets locked. Tap to fix"); el.setAttribute('aria-label', "Screen time: can't see your screen time, so nothing gets locked. Set it up"); return; }
+  // access is on but today can't be read: native fails open, so say nothing gets locked (never a stale countdown)
+  if (!scr.now) { slab('Screen time', "Can't read today's screen time, so nothing gets locked. Tap to retry"); el.dataset.retry = '1'; el.setAttribute('aria-label', "Screen time: can't read today's screen time, so nothing gets locked. Retry"); return; }
+  const used = scrUsed(), D = S.screen.days[t], total = scr.now ? scr.now.total : D ? D.t : 0;
+  const top = of => `<div class="scr-top"><span class="label">Screen time</span><span class="of">${of}</span></div>`, ft = (h, coin) => `<div class="scr-ft">${coin ? COIN_SM : ''}<span>${h}</span></div>`;
+  if (!cur || !cur.limit || !cur.apps.length) {   // tracking only
+    const soon = !cur && nx && nx.limit > 0;
+    el.className = 'scr';
+    el.innerHTML = top(soon ? 'STARTS TOMORROW' : 'NO LIMIT') + `<div class="scr-hd"><b>${used}</b><span>min today</span></div>`
+      + ft(soon ? `Your ${limName(nx.limit)} limit starts at midnight` : (cur || nx) && !(cur || nx).limit ? `Whole phone today: ${fmtMins(total)}` : 'No apps picked. Tap to pick some');
+    el.setAttribute('aria-label', `Screen time: ${used} minutes today, ${soon ? `your ${limName(nx.limit)} limit starts at midnight` : 'no limit'}.`);
+    return;
+  }
+  const L = cur.limit, left = L - used, pay = SCR_PAY(L), run = scrLedger().now;
+  // unpicked games and videos count for coins (never for the lock): say so once they cost today's coins
+  const oth = Math.round(+scr.now.other || 0), lost = used <= L && used + oth > L, lostFt = ft(`No coins today: ${fmtMins(oth)} on unpicked games and videos`);
+  const flame = run >= 2 ? `<span class="streak" aria-label="Streak: ${run} days under your limit in a row">${FLAME}${run}</span>` : '';
+  const streakSay = run >= 2 ? ` ${run} days under in a row.` : '';
+  let cls = 'scr', hd, n = notches(L, left), f, aria;
+  if (!st.blocker) {
+    hd = used > L ? `<b>${used - L}</b><span>min over</span>${flame}` : `<b>${left}</b><span>min left</span>${flame}`;
+    f = lost ? lostFt : left > 0 ? ft(`Stay under till midnight: +${pay} coins`, 1) : left === 0 ? ft(`At your limit. Stop now and you still get +${pay} coins`, 1) : ft('No screen coins today. New day at midnight.');
+    aria = used > L ? `Screen time: ${used - L} minutes over. Blocker is off.` : `Screen time: ${left} minutes left of ${limName(L)}. Blocker is off.${streakSay}`;
+  } else if (left <= 0) {
+    cls += ' off'; hd = `${LOCK}<b>TIME'S UP</b>`; n = notches(L, 0);
+    f = used <= L && !lost ? ft(`Locked till midnight · you still bank +${pay} coins`, 1) : ft('Locked till midnight · no screen coins today');
+    aria = "Screen time: time's up. Limited apps locked till midnight.";
+  } else {
+    if (left <= 5) { cls += ' low'; f = ft('Wrap it up. Your apps lock at zero.'); } else f = lost ? lostFt : ft(`Stay under till midnight: +${pay} coins`, 1);
+    hd = `<b>${left}</b><span>min left</span>${flame}`;
+    aria = `Screen time: ${left} minutes left of ${limName(L)}.${streakSay}`;
+  }
+  el.className = cls;
+  el.innerHTML = top(`${used} / ${L} MIN`) + `<div class="scr-hd">${hd}</div>` + n + f + nxLine(cur, nx)
+    + (st.blocker ? '' : `<div class="scr-warn"><span>Blocker's off, so nothing gets locked.</span><button class="act" data-scr-fix>Turn on</button></div>`);
+  el.setAttribute('aria-label', aria);
+  const fix = el.querySelector('[data-scr-fix]');
+  if (fix) fix.onclick = ev => { ev.stopPropagation(); Sound.tap(); setupSheet(); };
+}
+$('scr').onclick = () => {
+  Sound.tap();
+  if ($('scr').dataset.retry) {   // today couldn't be read: read again
+    levelupScreenTimeChanged();
+    if (!scr.now && scr.st && scr.st.usage) showNote("Still can't read your screen time", 'Nothing gets locked till it works. Try again in a bit.', HOURGLASS, 'Screen time');
+    return;
+  }
+  !S.screen.plan.length || !scr.st || !scr.st.usage ? setupSheet() : settingsSheet();
+};
+$('scr').onkeydown = e => { if (e.target === $('scr') && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); $('scr').click(); } };
+$('scrOpen').hidden = !scrOn();
+$('scrOpen').onclick = () => { Sound.tap(); S.screen.plan.length ? settingsSheet() : setupSheet(); };
+
+/* commitment rules: tightening applies now, loosening waits for midnight. Past entries are never edited */
+function scrCur() {   // today's entry, copying an older one to today first so past days keep the rule they had
+  const t = today(), c = scrAt(t); if (!c || c.from === t) return c;
+  const n = { from: t, limit: c.limit, apps: [...c.apps] };
+  S.screen.plan.splice(S.screen.plan.indexOf(c) + 1, 0, n); return n;
+}
+function scrNxMake() {
+  let n = scrNext(); if (n) return n;
+  const c = scrAt(today()); n = { from: ymd(addDays(new Date(), 1)), limit: c.limit, apps: [...c.apps] };
+  S.screen.plan.push(n); return n;
+}
+function scrAfter() {
+  const P = S.screen.plan, t = today();
+  for (let i = P.length - 1; i > 0; i--) {   // drop an entry that changes nothing (a cancelled change, a no-op copy)
+    if (P[i].from >= t && P[i].limit === P[i - 1].limit && sameApps(P[i].apps, P[i - 1].apps) && P[i - 1].from <= t) P.splice(i, 1);
+  }
+  save(); scrPush(); scrRefresh(true); renderScreen(); scrRepaint(); afterChange();
+}
+function scrSetLimit(v) {
+  const c0 = scrAt(today()), nx = scrNext();
+  if (!c0) { if (nx) nx.limit = v; Sound.tap(); scrAfter(); return; }   // the plan hasn't started: change it freely
+  if (v > 0 && (!c0.limit || v <= c0.limit)) {
+    const used = scrUsed();
+    if (scrBlocker() && c0.apps.length && used >= v && !(c0.limit && used >= c0.limit)
+      && !confirm(`You've used ${used} min today. A ${limName(v)} limit locks your apps right now. Set it?`)) return;
+    scrCur().limit = v; if (nx) nx.limit = v;   // also cancels a raise waiting for tomorrow
+  } else if (v !== c0.limit) scrNxMake().limit = v;
+  else if (nx) nx.limit = v;
+  Sound.tap(); buzz(8); scrAfter();
+}
+function scrToggle(pkg) {
+  const c0 = scrAt(today()), nx = scrNext(), app = (scr.apps || []).find(a => a.pkg === pkg);
+  if (!c0) { if (nx) nx.apps = nx.apps.includes(pkg) ? nx.apps.filter(p => p !== pkg) : [...nx.apps, pkg]; }
+  else if (c0.apps.includes(pkg)) {
+    if (!nx || nx.apps.includes(pkg)) { const n = scrNxMake(); n.apps = n.apps.filter(p => p !== pkg); }   // removal: from tomorrow
+    else nx.apps.push(pkg);   // undo a waiting removal
+  } else {   // adding counts right away
+    const used = scrUsed(), m = app ? app.min || 0 : 0;
+    if (scrBlocker() && c0.limit && used < c0.limit && used + m >= c0.limit
+      && !confirm(`${app ? app.name : 'This app'} has ${m} min today, so you'd be at ${used + m} of ${c0.limit} min and your apps lock right now. Add it?`)) return;
+    scrCur().apps.push(pkg); if (nx && !nx.apps.includes(pkg)) nx.apps.push(pkg);
+  }
+  Sound.tap(); buzz(8); scrAfter();
+}
+function scrLoadApps() {
+  const r = scrCall('screenTimeApps');
+  if (r && r.ok && Array.isArray(r.apps)) scr.apps = r.apps.filter(a => a && typeof a.pkg === 'string' && a.pkg !== 'app.levelup').map(a => ({ pkg: a.pkg, name: String(a.name || a.pkg), min: a.min | 0, suggest: !!a.suggest, icon: typeof a.icon === 'string' && /^data:image\//.test(a.icon) ? a.icon : '' }));
+  // setup made the plan while the list wouldn't load: tick the suggested apps now (adding apps applies at once)
+  if (scr.apps && scr.autoEmpty) {
+    scr.autoEmpty = false;
+    const P = S.screen.plan;
+    if (P.length === 1 && !P[0].apps.length) { P[0].apps = scr.apps.filter(a => a.suggest).map(a => a.pkg); save(); scrPush(); }
+  }
+  return scr.apps;
+}
+// the setup flow creates the plan once Usage access is on: 1 hour on the suggested apps
+function scrEnsurePlan() {
+  if (S.screen.plan.length || !scr.st || !scr.st.usage) return;
+  const apps = scr.apps || scrLoadApps();   // the list failed: make the plan anyway, step 2 offers Try again
+  S.screen.plan.push({ from: today(), limit: 60, apps: apps ? apps.filter(a => a.suggest).map(a => a.pkg) : [] });
+  if (!apps) scr.autoEmpty = true;
+  save(); scrPush(); scrRefresh(true);
+}
+function scrOpenSettings(which) {
+  Sound.tap();
+  let ok = false;
+  try { ok = LevelUpAndroid.openScreenTimeSettings(which) === true; } catch (e) {}
+  if (which === 'usage') scr.tried.usage = true;
+  if (which === 'accessibility') scr.tried.a11y = true;
+  if (!ok) showNote("Couldn't open Settings", { usage: 'Open Settings and search for "Usage access"', accessibility: 'Open Settings and search for "Accessibility"', appinfo: 'Open Settings > Apps > LEVEL UP' }[which], HOURGLASS, 'Screen time');
+}
+
+/* setup sheet: three steps, re-rendered in place when the user comes back from Settings */
+const TICK = '<svg viewBox="0 0 18 18" aria-hidden="true"><path d="M3 9.5l4 4 8-9" fill="none" stroke="#0c0a1d" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+let stpWas = null;   // which steps were done when last drawn, to cheer the one that just got done
+function scrSummary(e) {
+  const by = new Map((scr.apps || []).map(a => [a.pkg, a]));
+  const names = e.apps.filter(p => by.has(p)).sort((a, b) => by.get(b).min - by.get(a).min || by.get(a).name.localeCompare(by.get(b).name)).map(p => by.get(p).name);
+  const n = scr.apps ? names.length : e.apps.length;
+  return `<b>${limName(e.limit) || 'No limit'}</b> a day · ${!n ? 'no apps picked yet' : scr.apps ? esc(names.slice(0, 4).join(', ')) + (n > 4 ? ` + ${n - 4} more` : '') : `${n} ${n === 1 ? 'app' : 'apps'}`}`;
+}
+function setupHTML() {
+  const st = scr.st || {}, t = today(), cur = scrAt(t), nx = scrNext(), e = cur || nx, s1 = !!st.usage, s2 = s1 && !!e && e.apps.length > 0, s3 = !!st.blocker, r13 = (st.sdk || 0) >= 33;
+  const all = s1 && s2 && s3;
+  const step = (n, ok, title, body, extra = '') => `<div class="stp${ok ? ' ok' : ''}${n === 2 && !s1 ? ' locked' : ''}"><span class="n">${ok ? TICK : n}</span><div><b>${title}</b>${body}${extra}</div></div>`;
+  const got = '<span class="got">Done</span>';
+  // Android 13+ "Restricted setting": the fix lives under step 3, or under step 1 once the blocker is already on
+  const rst = (open, sum, again) => `<details class="rst"${open ? ' open' : ''}><summary>${sum}</summary><ol>
+      <li>Tap <b>OK</b> on that message.</li>
+      <li>Tap <b>Open App info</b> below. Tap <b>⋮</b> in the top corner, then <b>Allow restricted settings</b>. Confirm with your PIN or fingerprint.</li>
+      <li>Come back and tap <b>${again}</b> again. The switch works now.</li></ol>
+      <button class="do ghost2" data-open="appinfo">Open App info</button></details>`;
+  const hint1 = scr.tried.usage && r13;
+  const one = s1 ? got : `<p class="stp-d">Android calls this <q>Usage access</q>. Switch LEVEL UP on, then come back here.</p>
+    ${hint1 ? `<p class="stp-d">Switch greyed out or says <q>Restricted setting</q>? Use the fix ${s3 ? 'below' : 'under step 3'}, then try again.</p>` : ''}
+    <button class="do" data-open="usage">Open Usage access</button>${hint1 && s3 ? rst(true, 'Says “Restricted setting”?', 'Open Usage access') : ''}`;
+  const two = !s1 ? '<p class="stp-d">Unlocks after step 1.</p>'
+    : !e ? '<p class="stp-d">Loading your apps...</p>'
+    : !e.apps.length && !scr.apps ? `<div class="sum">${scrSummary(e)}</div><p class="stp-d">Couldn't load your apps.</p><button class="act" data-retry-apps>Try again</button>`
+    : `<div class="sum">${scrSummary(e)}</div>${all ? '' : `<button class="act" data-change>${e.apps.length ? 'Change' : 'Pick apps'}</button>`}`;
+  const failed = scr.tried.a11y && !s3, inst = /samsung/i.test(st.maker || '');
+  const three = s3 ? got : `<p class="stp-d">In Accessibility, find LEVEL UP (it may be under <q>${inst ? 'Installed apps' : 'Downloaded apps'}</q> or <q>${inst ? 'Downloaded apps' : 'Installed apps'}</q>) and switch it on.</p>
+    <p class="stp-d">Android will warn that LEVEL UP gets <q>full control</q>. It only checks which app is open, so it can send you home when time's up. It can't read your messages or type anything.</p>
+    <button class="do" data-open="accessibility">Open Accessibility</button>
+    ${r13 ? rst(failed, failed ? "Didn't work? It's probably this:" : 'Says “Restricted setting”?', 'Open Accessibility') : ''}`;
+  // already over today's limit with the blocker still off: it would lock at once, so offer to start at midnight
+  let heads = '';
+  if (s1 && !s3) {
+    const P = S.screen.plan;
+    if (P.length === 1 && P[0].from > t) heads = `<div class="heads">Your limit starts at midnight. Today doesn't count. <button class="act" data-when="today">Start today after all</button></div>`;
+    else if (scrLim(cur) && scrUsed() >= cur.limit) heads = `<div class="heads">Heads up: you've used ${fmtMins(scrUsed())} today already, so your apps lock as soon as the blocker is on.${P.length === 1 && P[0].from === t ? ' <button class="act" data-when="tomorrow">Start tomorrow instead</button>' : ''}</div>`;
+  }
+  const hd = all ? `<h2>You're set</h2><p class="dim">Your limit is on. ${limName(e.limit) || 'No limit'} a day on ${e.apps.length} ${e.apps.length === 1 ? 'app' : 'apps'}.</p>`
+    : `<h2>Screen time limit</h2><p class="dim">1 hour a day on games, videos and social apps. When it runs out, LEVEL UP sends you to your home screen till midnight.</p>`;
+  return hd + step(1, s1, 'See your screen time', one) + step(2, s2, 'Check what counts', two) + step(3, s3, 'Turn on the blocker', three, heads)
+    + (all ? '<button class="go" data-done>Let\'s go</button>' : '')
+    + '<p class="st-foot">Calls, texts, Settings and the camera are never blocked. You can switch the blocker off in Android Settings any time.</p>';
+}
+function stpState() { const st = scr.st || {}, e = scrAt(today()) || scrNext(); return { u: !!st.usage, p: !!(st.usage && e && e.apps.length), b: !!st.blocker }; }
+function bindSetup(el) {
+  el.querySelectorAll('[data-open]').forEach(b => b.onclick = () => scrOpenSettings(b.dataset.open));
+  const ch = el.querySelector('[data-change]'); if (ch) ch.onclick = () => { Sound.tap(); settingsSheet(); };
+  const ra = el.querySelector('[data-retry-apps]');
+  if (ra) ra.onclick = () => { Sound.tap(); if (!scrLoadApps()) showNote("Couldn't load your apps", 'Try again in a bit, or pick them later in Screen time.', HOURGLASS, 'Screen time'); scrRefresh(true); renderScreen(); scrRepaint(); };
+  const go = el.querySelector('[data-done]'); if (go) go.onclick = () => { Sound.tap(); closeSheet(); };
+  el.querySelectorAll('[data-when]').forEach(b => b.onclick = () => {
+    const P = S.screen.plan; if (P.length !== 1) return;
+    P[0].from = b.dataset.when === 'tomorrow' ? ymd(addDays(new Date(), 1)) : today();   // back to today is a tightening: allowed any time
+    Sound.tap(); scrAfter();
+  });
+}
+function setupSheet() {
+  scrRefresh(true); scrEnsurePlan();
+  stpWas = stpState();
+  openSheet(`<div data-scr="setup">${setupHTML()}</div>`, bindSetup);
+  renderScreen();
+}
+
+/* settings sheet */
+let wkKey = null, stList = null;   // stList: the app order, fixed when the sheet opens so rows never jump under a finger
+function settingsHTML() {
+  const t = today(), cur = scrAt(t), nx = scrNext(), e = cur || nx, used = scrUsed(), D = S.screen.days, run = scrLedger().now;
+  const total = scr.now ? scr.now.total : D[t] ? D[t].t : 0;
+  const tip = k => {
+    if (k === t) return scrLim(cur) ? `Today so far: ${used} of ${cur.limit} min` : `Today so far: ${fmtMins(used)}`;
+    const d = D[k], when = fmtDate(k);
+    if (!d || d.f !== 1) return `${when}: no data`;
+    if (!d.l) return `${when}: ${fmtMins(d.t)} · no limit`;
+    return scrOk(d) ? `${when}: ${d.u} of ${d.l} min · +${SCR_PAY(d.l)} coins` : d.u <= d.l ? `${when}: ${d.u} of ${d.l} min + ${d.o} unpicked · no coins` : `${when}: ${d.u} of ${d.l} min · over`;
+  };
+  const wk = Array.from({ length: 7 }, (_, i) => {
+    const day = addDays(new Date(), i - 6), k = ymd(day), d = D[k];
+    const cls = k === t ? 'today' : d && d.f === 1 && d.l > 0 ? (scrOk(d) ? 'hit' : 'miss') : 'off';
+    return `<button class="${cls}${k === wkKey ? ' sel' : ''}" data-k="${k}" aria-label="${esc(tip(k))}"><i></i>${DAY[day.getDay()]}</button>`;
+  }).join('');
+  const lims = [...SCR_LIMITS, 0].map(v => {
+    const on = cur ? cur.limit === v : false, waiting = nx && nx.limit === v && (!cur || cur.limit !== v);
+    return `<button class="${on ? 'on' : ''}${waiting ? ' nx' : ''}" data-lim="${v}" aria-pressed="${on}"${waiting ? ` aria-label="${v ? limName(v) : 'Off'}, starts tomorrow"` : ''}><b>${v ? limName(v) : 'Off'}</b>${v ? `<small>${COIN_SM}+${SCR_PAY(v)}/day</small>` : '<small class="none">no coins</small>'}</button>`;
+  }).join('');
+  const pend = !cur && nx ? `<div class="pend"><span>Your limit starts at midnight.</span><button class="act" data-now>Start now</button></div>`
+    : cur && nx && nx.limit !== cur.limit ? `<div class="pend"><span>Tomorrow: <b>${limName(nx.limit)}</b>. Today stays at ${limName(cur.limit)}.</span><button class="act" data-keep>Keep ${limName(cur.limit)}</button></div>` : '';
+  const picked = e ? e.apps : [];
+  const search = stList && scr.apps && scr.apps.length > 12 ? `<input class="search" type="search" placeholder="Search apps" aria-label="Search apps" value="${esc(stList.q)}" autocomplete="off">` : '';
+  const bl = scrBlocker() ? '<div><b>On</b><small>Sends you home when time\'s up</small></div>'
+    : '<div><b class="off">Off</b><small>Nothing gets locked</small></div><button class="act" data-fix>Turn on</button>';
+  return `<h2>Screen time</h2>
+    <div class="st-today"><div><span class="label">Today · limited apps</span><div class="big">${used}<small>min</small></div></div><div class="tot"><b>${fmtMins(total)}</b>whole phone today</div></div>
+    <div class="wk" role="group" aria-label="Last 7 days">${wk}</div>
+    <div class="wk-tip" aria-live="polite">${esc(wkKey ? tip(wkKey) : run >= 2 ? `${run} days under in a row · tap a day` : 'Tap a day to see it')}</div>
+    <span class="label">Daily limit</span>
+    <div class="lim">${lims}</div>${pend}
+    <p class="rule-note">Lower limits start now. Higher limits and Off start tomorrow, so you can't cave at 10pm.</p>
+    <span class="label">Apps that count · ${picked.length}</span>
+    ${search}<div data-alist>${scrListHTML()}</div>
+    <p class="rule-note">Adding an app counts right away. Removing one still counts till midnight. For coins, unpicked games and video apps count too.</p>
+    <p class="rule-note">Can't find an app? Phone, texts, Settings, camera, clock, keyboards and LEVEL UP itself can never be limited, so they're not here.</p>
+    <span class="label">Blocker</span>
+    <div class="st-blk">${bl}</div>
+    <p class="st-foot">LEVEL UP looks back 7 days, so open it at least once a week to bank every coin.</p>`;
+}
+// the app rows (+ Show all), redrawn on their own while searching so the search box is never replaced mid-word
+function scrListHTML() {
+  if (!stList || !scr.apps) return '<div class="alist"><p class="dim">Loading your apps...</p></div>';
+  const t = today(), cur = scrAt(t), nx = scrNext(), e = cur || nx, picked = e ? e.apps : [];
+  const by = new Map(scr.apps.map(a => [a.pkg, a])), q = stList.q.trim().toLowerCase();
+  const row = a => {
+    const on = (cur ? cur.apps : picked).includes(a.pkg), leaving = !!(cur && nx && on && !nx.apps.includes(a.pkg));
+    return `<button class="arow${leaving ? ' leaving' : ''}" role="checkbox" aria-checked="${on}" data-pkg="${esc(a.pkg)}"><span class="ai">${a.icon ? `<img src="${a.icon}" alt="">` : esc((a.name.trim()[0] || '?').toUpperCase())}</span><span class="grow"><span class="nm">${esc(a.name)}</span>${leaving ? '<span class="mt nx">Counts till midnight</span>' : ''}</span><span class="min">${a.min ? `${a.min} min` : ''}</span><span class="ck">${CHECK}</span></button>`;
+  };
+  const ids = q ? stList.order.filter(p => by.get(p).name.toLowerCase().includes(q)) : stList.all ? stList.order : stList.order.slice(0, stList.top);
+  const list = ids.length ? ids.map(p => row(by.get(p))).join('') : `<p class="dim">${q ? 'No app called that' : 'No apps to show'}</p>`;
+  const rest = stList.order.length - stList.top;
+  return `<div class="alist">${list}</div>${!q && !stList.all && rest > 0 ? `<button class="act" data-more>Show all apps (${rest})</button>` : ''}`;
+}
+function bindList(el) {
+  el.querySelectorAll('[data-pkg]').forEach(b => b.onclick = () => scrToggle(b.dataset.pkg));
+  const m = el.querySelector('[data-more]');
+  if (m) m.onclick = () => { stList.all = true; Sound.tap(); scrRepaint(); const r = $('sheet').querySelectorAll('.arow')[stList.top]; if (r) r.focus({ preventScroll: true }); };
+}
+function bindSettings(el) {
+  el.querySelectorAll('.wk [data-k]').forEach(b => b.onclick = () => { wkKey = b.dataset.k; Sound.tap(); scrRepaint(); });
+  el.querySelectorAll('[data-lim]').forEach(b => b.onclick = () => scrSetLimit(+b.dataset.lim));
+  bindList(el);
+  const on = (sel, f) => { const b = el.querySelector(sel); if (b) b.onclick = f; };
+  on('[data-keep]', () => scrSetLimit(scrAt(today()).limit));
+  on('[data-now]', () => { const n = scrNext(); if (n && !scrAt(today())) { n.from = today(); Sound.tap(); scrAfter(); } });
+  on('[data-fix]', () => { Sound.tap(); setupSheet(); });
+  const s = el.querySelector('.search');
+  if (s) s.oninput = () => { stList.q = s.value; const box = el.querySelector('[data-alist]'); if (box) { box.innerHTML = scrListHTML(); bindList(box); } };
+}
+function settingsSheet() {
+  scrRefresh(true);
+  if (!scr.st || !scr.st.usage || !S.screen.plan.length) { setupSheet(); return; }
+  wkKey = null; stList = null;
+  openSheet(`<div data-scr="settings">${settingsHTML()}</div>`, bindSettings);
+  setTimeout(() => {   // the app list is slow to build: show the sheet first
+    if (!scrLoadApps()) scr.apps = [];
+    const t = today(), e = scrAt(t) || scrNext(), picked = new Set(e ? e.apps : []);
+    const a = scr.apps.filter(x => picked.has(x.pkg)).sort((x, y) => y.min - x.min || x.name.localeCompare(y.name));
+    const b = scr.apps.filter(x => !picked.has(x.pkg) && x.min > 0).sort((x, y) => y.min - x.min || x.name.localeCompare(y.name));
+    const c = scr.apps.filter(x => !picked.has(x.pkg) && !(x.min > 0)).sort((x, y) => x.name.localeCompare(y.name));
+    stList = { order: [...a, ...b, ...c].map(x => x.pkg), top: a.length + b.length, all: false, q: '' };
+    scrRepaint();
+  }, 30);
+}
+// redraws an open screen-time sheet in place: same scroll position, focus back on the same control
+function scrRepaint() {
+  if (!$('sheetbg').classList.contains('open')) return;
+  const box = $('sheet').querySelector('[data-scr]'); if (!box) return;
+  const a = document.activeElement, keyOf = x => !x || !box.contains(x) ? null
+    : x.dataset.pkg ? `[data-pkg="${CSS.escape(x.dataset.pkg)}"]` : x.dataset.lim ? `[data-lim="${x.dataset.lim}"]` : x.dataset.k ? `[data-k="${x.dataset.k}"]` : x.classList.contains('search') ? '.search' : x.dataset.open ? `[data-open="${x.dataset.open}"]` : null;
+  const focus = keyOf(a), top = $('sheet').scrollTop, kind = box.dataset.scr;
+  if (kind === 'setup') {
+    scrEnsurePlan();
+    const was = stpWas, now = stpState(), open = !!box.querySelector('.rst[open]');
+    box.innerHTML = setupHTML().replace('<h2>', '<h2 id="sheetTitle">'); bindSetup(box);
+    if (open) { const d = box.querySelector('.rst'); if (d) d.open = true; }
+    if (was && now.u && now.p && now.b && !(was.u && was.p && was.b)) {
+      const e = scrAt(today()) || scrNext();
+      Sound.clear(); buzz([15, 40, 15]);
+      showNote("Limit's on", `${limName(e.limit) || 'No limit'} a day. Stay under for +${SCR_PAY(e.limit)} coins a day.`, HOURGLASS, 'Screen time');
+    } else if (was && ((now.u && !was.u) || (now.b && !was.b))) { Sound.check(); buzz(12); }
+    stpWas = now;
+  } else {
+    box.innerHTML = settingsHTML().replace('<h2>', '<h2 id="sheetTitle">'); bindSettings(box);
+  }
+  $('sheet').scrollTop = top;
+  const f = focus && box.querySelector(focus);
+  if (f) { f.focus({ preventScroll: true }); if (f.classList.contains('search')) f.setSelectionRange(f.value.length, f.value.length); }
+}
+// native calls these: on every return to the app (from Settings or a limited app), and from the block screen
+window.levelupScreenTimeChanged = () => { if (!scrOn()) return; scrRefresh(true); renderScreen(); scrRepaint(); afterChange(); };
+window.levelupOpenWorkout = () => {
+  if (!$('wo').hidden && $('wo').classList.contains('res')) claimResults();
+  $('rankup').classList.remove('open'); closeSheet();
+  if (!$('v-home').classList.contains('on')) document.querySelector('.nav button[data-v=home]').click();
+  S.workout ? openWorkout() : pickSheet();
+};
+
 function afterChange() { checkBoss(); checkAchievements(); renderCoins(); if ($('v-locker').classList.contains('on')) renderLocker(); }
 
 /* ------------------------------------------------------------------ nav + boot */
@@ -1454,15 +1926,16 @@ window.levelupBack = () => {
   if (!$('v-home').classList.contains('on')) { document.querySelector('.nav button[data-v=home]').click(); return true; }
   return false;   // app to background; a running workout persists
 };
-function renderAll() { renderCard(); renderBoss(); renderHabits(); renderGoals(); renderTrain(); if ($('v-stats').classList.contains('on')) renderStats(); afterChange(); }
+function renderAll() { renderCard(); renderScreen(); renderBoss(); renderHabits(); renderGoals(); renderTrain(); if ($('v-stats').classList.contains('on')) renderStats(); afterChange(); }
 renderBody(); renderAll(); save(); woBoot();
+setTimeout(() => { scrRefresh(true); scrPush(); renderScreen(); afterChange(); }, 0);
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
 // a new day while the app stays open (or comes back from the background): redraw so "today" moves
 let lastDay = today();
-const rollover = () => { if (today() !== lastDay) { lastDay = today(); renderAll(); return true; } return false; };
+const rollover = () => { if (today() !== lastDay) { lastDay = today(); scrRefresh(true); scrPush(); renderAll(); scrRepaint(); return true; } return false; };
 setInterval(() => { if (!rollover() && $('v-stats').classList.contains('on')) renderQuit(); }, 30000);
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) rollover();
+  if (!document.hidden && !rollover() && scrOn() && scrRefresh()) { renderScreen(); scrRepaint(); afterChange(); }
   if (!document.hidden && S.workout) { woTick(); if (S.workout && !$('wo').hidden) renderWorkout(); }
   if (!document.hidden && woAwake) wake(true);   // the browser drops a wake lock while hidden: take it again
 });

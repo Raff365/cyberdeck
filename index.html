@@ -30,6 +30,9 @@
          --streak      streak counts and the quit timer
          category hues identify a quest's category (icon tile + stripe) only
          muscle ramp   ordinal gold, inside the body chart only (validated)
+         screen time: chalk = time you have left (the light of a screen). A finished day under the limit
+         is --done, like any done day. A run of them is a --streak. Over the limit the card goes dark,
+         like a screen switched off.
    ------------------------------------------------------------------------ */
 @font-face { font-family: "Barlow Condensed"; font-weight: 500; font-style: normal; font-display: swap; src: url(fonts/barlowc-500.woff2) format("woff2"); }
 @font-face { font-family: "Barlow Condensed"; font-weight: 600; font-style: normal; font-display: swap; src: url(fonts/barlowc-600.woff2) format("woff2"); }
@@ -580,6 +583,125 @@ html:has(.wo:not([hidden])) { overflow: hidden; }
 .rankup .go { max-width: 320px; margin-top: 30px; }
 @keyframes slam { from { transform: scale(2.2) rotate(-8deg); opacity: 0; } }
 @keyframes drop { from { transform: translateY(-30px); opacity: 0; } }
+/* ---- screen time (Android app only; see the colour jobs above) */
+.scr { position: relative; display: block; width: 100%; margin-top: 14px; padding: 12px 14px 13px; border-radius: 18px; text-align: left; cursor: pointer;
+  background: color-mix(in srgb, var(--panel) 94%, transparent); border: 1px solid var(--rule-hi); }
+.scr-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.scr-top .of { font: 700 15px/1 var(--display); letter-spacing: .04em; color: var(--dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.scr-hd { display: flex; align-items: baseline; gap: 7px; margin: 9px 0 11px; min-height: 38px; }
+.scr-hd b { font: italic 800 46px/.8 var(--display); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.scr-hd span { font: italic 800 22px/1 var(--display); text-transform: uppercase; letter-spacing: .01em; }
+.scr-hd .streak { margin-left: auto; align-self: center; }
+.notch { display: flex; gap: 3px; }
+.notch.many { gap: 2px; }
+.notch i { flex: 1; height: 8px; border-radius: 4px; background: var(--panel-hi); border: 1px solid var(--rule); }
+.notch i.on { background: var(--chalk); border-color: var(--chalk); box-shadow: 0 0 8px color-mix(in srgb, var(--chalk) 40%, transparent); }
+.scr.low .notch i.last { animation: blink 1s steps(2, jump-none) infinite; }
+@keyframes blink { 50% { opacity: .25; } }
+.scr-ft { display: flex; align-items: flex-start; gap: 6px; margin-top: 10px; font-size: 12.5px; line-height: 1.35; color: var(--dim); }
+.scr-ft span { min-width: 0; overflow-wrap: anywhere; }
+.scr-ft svg { width: 14px; height: 14px; flex: none; margin-top: 1px; }
+.scr-ft + .scr-ft { margin-top: 3px; }
+.scr-ft.nx { color: var(--chalk); }
+/* over the limit with the blocker on: the screen is off */
+.scr.off { background: var(--ground); border-color: var(--rule); }
+.scr.off .scr-hd b { font-size: 44px; }
+.scr.off .scr-top .label, .scr.off .scr-top .of { color: var(--faint); }
+.scr.off .lock { width: 26px; height: 26px; align-self: center; color: var(--dim); }
+/* the blocker is off: numbers still true, nothing gets locked */
+.scr-warn { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 12px -14px -13px; padding: 0 14px 0 14px; min-height: 48px;
+  border-top: 1px solid var(--rule); background: rgba(0,0,0,.22); border-radius: 0 0 17px 17px; font-size: 12.5px; color: var(--chalk); }
+.scr-warn .act { flex: none; }
+/* not set up yet: a slab like START WORKOUT, but quiet */
+.scr.setup { display: flex; align-items: center; gap: 12px; min-height: 72px; padding: 10px 14px 10px 10px; }
+.scr.setup .ic { width: 50px; height: 50px; flex: none; border-radius: 14px; display: grid; place-items: center; background: var(--panel-hi); border: 1px solid var(--rule-hi); color: var(--chalk); }
+.scr.setup .ic svg { width: 26px; height: 26px; }
+.scr.setup .tx { flex: 1; min-width: 0; }
+.scr.setup b { display: block; font: italic 800 clamp(21px, 6.4vw, 25px)/1 var(--display); text-transform: uppercase; letter-spacing: .01em; white-space: nowrap; }
+.scr.setup small { display: block; font-size: 12.5px; color: var(--dim); margin-top: 5px; }
+.scr.setup .chev { width: 22px; height: 22px; flex: none; color: var(--dim); }
+
+/* setup sheet */
+.stp { display: grid; grid-template-columns: 34px minmax(0, 1fr); column-gap: 12px; padding: 14px 0 12px; border-top: 1px solid var(--rule); }
+.stp .n { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font: italic 800 19px/1 var(--display); border: 1.5px solid var(--rule-hi); color: var(--dim); }
+.stp.ok .n { background: var(--done); border-color: var(--done); color: #0c0a1d; }
+.stp.ok .n svg { width: 18px; height: 18px; }
+.stp b { display: block; font: 800 20px/1.05 var(--display); text-transform: uppercase; letter-spacing: .01em; padding-top: 7px; }
+.stp.ok b { color: var(--dim); }
+.stp .stp-d { font-size: 13px; line-height: 1.45; color: var(--dim); margin: 6px 0 0; }
+.stp .stp-d q { color: var(--chalk); quotes: "\201C" "\201D"; }
+.stp .do { display: inline-flex; align-items: center; justify-content: center; height: 44px; padding: 0 18px; margin-top: 10px; border-radius: 12px; background: var(--rank); color: #0c0a1d; font: 800 17px/1 var(--display); letter-spacing: .06em; text-transform: uppercase; }
+.stp .do.ghost2 { background: none; color: var(--chalk); border: 1.5px solid var(--rule-hi); }
+.stp .got { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; font: 600 11px/1 var(--text); letter-spacing: .14em; text-transform: uppercase; color: var(--done); }
+.stp.locked { opacity: .5; }
+.sum { margin-top: 8px; padding: 10px 12px; border-radius: 12px; background: var(--ground); border: 1px solid var(--rule-hi); font-size: 13px; line-height: 1.4; }
+.sum b { font: 800 17px/1 var(--display); text-transform: uppercase; padding: 0; display: inline; }
+.rst { margin-top: 6px; }
+.rst summary { list-style: none; display: inline-flex; align-items: center; min-height: 44px; font: 600 12px/1 var(--text); letter-spacing: .12em; text-transform: uppercase; color: var(--chalk); text-decoration: underline; text-decoration-color: var(--rule-hi); text-underline-offset: 4px; cursor: pointer; }
+.rst summary::-webkit-details-marker { display: none; }
+.rst ol { margin: 4px 0 0 18px; font-size: 13px; line-height: 1.45; color: var(--dim); }
+.rst li { margin-bottom: 6px; padding-left: 2px; }
+.rst li b { display: inline; font: 700 13px/1.45 var(--text); text-transform: none; color: var(--chalk); padding: 0; letter-spacing: 0; }
+.heads { margin-top: 10px; padding: 10px 12px; border-radius: 12px; border: 1px dashed var(--rule-hi); font-size: 13px; line-height: 1.45; color: var(--chalk); }
+.st-foot { font-size: 12px !important; color: var(--faint); margin-top: 14px; line-height: 1.45; }
+
+/* settings sheet */
+.st-today { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; }
+.st-today .big { font: italic 800 40px/.85 var(--display); font-variant-numeric: tabular-nums; }
+.st-today .big small { font: italic 800 20px/1 var(--display); text-transform: uppercase; margin-left: 4px; }
+.st-today .tot { text-align: right; font-size: 12.5px; color: var(--dim); line-height: 1.35; }
+.st-today .tot b { display: block; font: 700 19px/1 var(--display); color: var(--chalk); font-variant-numeric: tabular-nums; }
+.wk { display: grid; grid-template-columns: repeat(7, 1fr); margin: 14px -3px 0; }
+.wk button { display: grid; gap: 5px; justify-items: center; padding: 0; min-height: 44px; font: 600 10px/1 var(--text); letter-spacing: .1em; color: var(--faint); }
+.wk button i { width: calc(100% - 6px); max-width: 34px; height: 22px; border-radius: 5px; background: var(--panel-hi); }
+.wk button.hit i { background: var(--done); box-shadow: 0 0 6px color-mix(in srgb, var(--done) 45%, transparent); }
+.wk button.miss i { background: #4a4572; }
+.wk button.off i { background: transparent; box-shadow: inset 0 0 0 1px var(--rule-hi); }
+.wk button.today i { background: transparent; outline: 1.5px solid var(--chalk); outline-offset: 1px; }
+.wk-tip { font-size: 12.5px; color: var(--chalk); min-height: 1.3em; margin-top: 8px; }
+.lim { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.lim button { position: relative; display: grid; gap: 4px; align-content: center; justify-items: center; min-height: 54px; border-radius: 12px; border: 1px solid var(--rule-hi); color: var(--dim); }
+.lim button b { font: 800 18px/1 var(--display); letter-spacing: .04em; text-transform: uppercase; }
+.lim button small { display: inline-flex; align-items: center; gap: 3px; font: 700 13px/1 var(--display); color: #ffd23f; letter-spacing: .02em; }
+.lim button small svg { width: 11px; height: 11px; }
+.lim button.on { background: var(--rank); border-color: var(--rank); color: #0c0a1d; }
+.lim button.on small { color: #3a2405; }
+.lim button.nx { border: 1.5px dashed var(--rank); color: var(--chalk); }
+.lim button.nx::after { content: "TOMORROW"; position: absolute; top: -7px; right: 6px; padding: 2px 5px; border-radius: 5px; background: var(--panel); font: 700 9px/1 var(--text); letter-spacing: .12em; color: var(--rank); }
+.pend { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; padding: 0 0 0 12px; min-height: 48px; border-radius: 12px; border: 1px dashed var(--rank); font-size: 13px; line-height: 1.35; }
+.pend .act { padding: 0 12px; flex: none; }
+.rule-note { font-size: 12.5px !important; color: var(--dim); margin: 8px 0 0 !important; line-height: 1.45; }
+.search { width: 100%; height: 44px; margin: 0 0 6px; padding: 0 12px; border-radius: 12px; background: var(--ground); border: 1px solid var(--rule-hi); font: 400 16px/1 var(--text); }
+.alist { display: grid; grid-template-columns: minmax(0, 1fr); }   /* a long app name ellipsizes instead of widening every row */
+.arow { display: flex; align-items: center; gap: 12px; min-height: 58px; padding: 6px 2px; border-bottom: 1px solid var(--rule); width: 100%; text-align: left; }
+.arow .ai { width: 36px; height: 36px; flex: none; border-radius: 10px; display: grid; place-items: center; font: 800 18px/1 var(--display); color: var(--chalk); background: var(--panel-hi); overflow: hidden; }
+.arow .ai img { width: 100%; height: 100%; }
+.arow .grow { flex: 1; min-width: 0; }
+.arow .nm { display: block; font: 700 19px/1.1 var(--display); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.arow .mt { display: block; font-size: 12px; color: var(--dim); margin-top: 2px; }
+.arow .mt.nx { color: var(--rank); }
+.arow .min { flex: none; font: 700 16px/1 var(--display); color: var(--dim); font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+.arow .ck { width: 30px; height: 30px; flex: none; border-radius: 9px; border: 2px solid #5d5891; display: grid; place-items: center; }
+.arow .ck svg { width: 17px; height: 17px; opacity: 0; }
+.arow[aria-checked=true] .ck { background: var(--rank); border-color: var(--rank); }
+.arow[aria-checked=true] .ck svg { opacity: 1; }
+.arow.leaving .ck { background: transparent; border: 2px dashed var(--rank); }
+.arow.leaving .ck svg { opacity: .7; }
+.arow.leaving .ck svg path { stroke: var(--rank); }
+.st-blk { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; }
+.st-blk b { font: 800 19px/1 var(--display); text-transform: uppercase; }
+.st-blk b.off { color: var(--dim); }
+.st-blk small { display: block; font-size: 12.5px; color: var(--dim); margin-top: 3px; }
+[data-scr] > .label { display: block; margin: 22px 0 8px; }
+[data-scr] > p.dim { margin-bottom: 4px; }
+.st-today .big { margin-top: 8px; }
+.stp.ok .sum { opacity: .6; }
+.stp .act { margin-top: 2px; }
+.heads .act { min-height: 44px; }
+.wk button.sel { color: var(--chalk); }
+.lim button small.none { color: var(--faint); }
+.alist + .act { margin-top: 2px; }
+.scr .scr-hd .streak { font-size: 20px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
   .delta, .spark, .dmg, .combo { display: none; }
@@ -611,6 +733,7 @@ html:has(.wo:not([hidden])) { overflow: hidden; }
       <div class="attrs" id="attrs"></div>
     </section>
     <button class="train" id="train"></button>
+    <section class="scr" id="scr" hidden role="button" tabindex="0" aria-label="Screen time"></section>
 
     <section class="boss" id="boss" role="button" tabindex="0" aria-label="Weekly boss"></section>
 
@@ -640,7 +763,7 @@ html:has(.wo:not([hidden])) { overflow: hidden; }
   <!-- LOCKER -->
   <main class="view" id="v-locker">
     <div class="sec"><h2>Locker</h2></div>
-    <div class="wallet"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="#ffb020"/><circle cx="12" cy="12" r="7.6" fill="#ffd23f"/><path d="M12 7.2l1.4 2.9 3.2.5-2.3 2.2.6 3.2-2.9-1.5-2.9 1.5.6-3.2-2.3-2.2 3.2-.5z" fill="#c98a0c"/></svg><div><b id="walletN">0</b><small>Earn coins: 10 per quest, 50 for clearing your day, up to 50 per workout, 250 per boss, plus trophies.</small></div></div>
+    <div class="wallet"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="#ffb020"/><circle cx="12" cy="12" r="7.6" fill="#ffd23f"/><path d="M12 7.2l1.4 2.9 3.2.5-2.3 2.2.6 3.2-2.9-1.5-2.9 1.5.6-3.2-2.3-2.2 3.2-.5z" fill="#c98a0c"/></svg><div><b id="walletN">0</b><small id="walletHow">Earn coins: 10 per quest, 50 for clearing your day, up to 50 per workout, 250 per boss, plus trophies.</small></div></div>
     <div class="sec"><h2>Card skins</h2></div>
     <div class="shop" id="skins"></div>
     <div class="sec"><h2>Titles</h2></div>
@@ -675,7 +798,7 @@ html:has(.wo:not([hidden])) { overflow: hidden; }
       <div class="acts"><button class="act" id="quitEdit">Edit</button><button class="act quiet" id="quitReset">I slipped, reset</button></div>
     </section>
 
-    <div class="foot"><button class="act" id="soundToggle"></button><button class="act" id="checkUpdate" hidden>Check for updates</button><button class="act" id="export">Export backup</button><button class="act" id="import">Import</button><button class="act danger" id="erase">Erase all</button>
+    <div class="foot"><button class="act" id="scrOpen" hidden>Screen time</button><button class="act" id="soundToggle"></button><button class="act" id="checkUpdate" hidden>Check for updates</button><button class="act" id="export">Export backup</button><button class="act" id="import">Import</button><button class="act danger" id="erase">Erase all</button>
       <input type="file" id="importFile" accept="application/json,.json" hidden></div>
     <p class="credit"><span id="appVersion"></span> Body map art: react-native-body-highlighter (MIT).</p>
   </main>

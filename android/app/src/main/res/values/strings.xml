@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">LEVEL UP</string>
+    <!-- shown on Android's screen for switching the blocker on; keep it honest and plain -->
+    <string name="screen_service_description">Sends you to your home screen when your daily screen time on the apps you picked in LEVEL UP runs out. It only checks which app is open. It doesn\'t read your screen, type anything or send anything anywhere.</string>
 </resources>
