@@ -1,7 +1,7 @@
 // Offline support. Precache the app; serve network-first so new deploys land, but never wait on a
 // stalled connection (fall back to the cache after a short timeout) and never let an error page
 // replace a good cached copy.
-const CACHE = 'levelup-v5';
+const CACHE = 'levelup-v6';
 const ASSETS = [
   './index.html', './app.js', './body-data.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/maskable-512.png', './icons/apple-touch-icon.png',
