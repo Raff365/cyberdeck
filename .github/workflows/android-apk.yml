@@ -56,7 +56,10 @@ jobs:
           name: LevelUp-apk
           path: LevelUp.apk
 
+      # Phones auto-update from the latest release, so a build that is only checking the code
+      # (commit message contains "[skip release]") must not publish one.
       - name: Publish a release with the APK
+        if: ${{ !contains(github.event.head_commit.message, '[skip release]') }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
