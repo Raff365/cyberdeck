@@ -41,7 +41,7 @@ public class MainActivity extends Activity {
     private static final int PICK_FILE = 1;
     private static final int GROUND = Color.rgb(0x0c, 0x0a, 0x1d);
 
-    private static final long CHECK_EVERY_MS = 6L * 60 * 60 * 1000;   // auto-check at most every 6 hours
+    private static final long CHECK_EVERY_MS = 15L * 60 * 1000;   // auto-check on open, at most every 15 minutes
 
     private WebView web;
     private ValueCallback<Uri[]> pendingPick;

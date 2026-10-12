@@ -86,6 +86,7 @@ function migrate(old) {
 }
 let S;
 try { S = JSON.parse(localStorage.getItem(KEY)); } catch (e) { S = null; }
+const hadSave = !!(S && Array.isArray(S.habits));
 if (!S || !Array.isArray(S.habits)) {
   let old = null; try { old = JSON.parse(localStorage.getItem('lockin.v1')); } catch (e) {}
   S = old && Array.isArray(old.habits) ? migrate(old) : seed();
@@ -791,6 +792,13 @@ if (window.LevelUpAndroid) {
   $('checkUpdate').hidden = false;
   $('checkUpdate').onclick = () => { $('checkUpdate').textContent = 'Checking...'; LevelUpAndroid.checkForUpdate(); Sound.tap(); };
   try { $('appVersion').textContent = `Version ${LevelUpAndroid.version()}.`; } catch (e) {}
+  // first open after an update: say so, so an update never lands silently
+  const WHATS_NEW = 'New: Start Workout, the gold bar on Home';
+  try {
+    const v = LevelUpAndroid.version(), seen = localStorage.getItem('levelup.version');
+    if (hadSave && seen !== v) showNote('Updated!', `${v.split(' ')[0]} · ${WHATS_NEW}`);
+    localStorage.setItem('levelup.version', v);
+  } catch (e) {}
 }
 
 /* ------------------------------------------------------------------ workouts */
