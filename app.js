@@ -74,6 +74,7 @@ function seed() {
     muscleCap: {}, woPaid: {},
     screen: { plan: [], days: {} },
     fits: [], fitKept: {}, polls: [], well: { goal: 8, bz: true, days: {} }, fitCam: { facing: 'user', timer: 5 },
+    irl: { live: null, log: [], ideas: [], seen: [], draw: null, f: { t: 0, p: '' } },
   };
 }
 // One-time carry-over from the first prototype (localStorage key lockin.v1).
@@ -179,6 +180,50 @@ const POLL_URL = 'https://cinolo.com/fit/', POLL_KEEP = 3 * 864e5;   // a closed
   }
   const c = S.fitCam || {};
   S.fitCam = { facing: c.facing === 'environment' ? 'environment' : 'user', timer: [0, 3, 5, 10].includes(c.timer) ? c.timer : 5 };
+}
+// ...and saves from before I'M BORED get theirs. irl.log: finished Phone Downs, oldest first [{id, k: deck key ('c:' + idea id
+// for your own), n, cat, min: minutes planned, t0, t1: start and end (ms), m: phone-free minutes, o: 'v' verified | 'h' honour
+// system | 'b' phone was busy, u: minutes in other apps, top: [[app, minutes]] (busy only), ph: proof photo id (IndexedDB, like
+// fits)}]; live: the one running {id, k, n, cat, min, t0, b0: boot time by the phone's clock at the start}; ideas: your own
+// [{id, n, min, cat}]; seen: deck keys dealt since the deck last went round; draw: the card on the table {k, rr: rerolls used,
+// at}; f: filters {t: max minutes (0 any), p: 'in' | 'out' | '' anywhere}
+const IRL_CATS = [
+  ['out', 'Outside', 'M12 1.5l6.5 8.5h-3.2l4.4 6.5H13V22h-2v-5.5H4.3l4.4-6.5H5.5z'],
+  ['move', 'Move', 'M13.5 1.5L4 13.5h7l-1.5 9 10-12.5h-7z'],
+  ['make', 'Create', 'M3 17.3V21h3.7L17.8 9.9l-3.7-3.7zM20.7 7a1 1 0 000-1.4l-2.3-2.3a1 1 0 00-1.4 0l-1.8 1.8 3.7 3.7z'],
+  ['build', 'Build', 'M3.5 13h7.5v7.5H3.5zM13 13h7.5v7.5H13zM8.2 3.5h7.6V11H8.2z'],
+  ['brain', 'Brain', 'M12 2a7 7 0 00-4 12.7V17h8v-2.3A7 7 0 0012 2zM9 18.5h6V21a1 1 0 01-1 1h-4a1 1 0 01-1-1z'],
+  ['people', 'People', 'M8.5 11.5a3.8 3.8 0 110-7.6 3.8 3.8 0 010 7.6zm8 0a3 3 0 110-6 3 3 0 010 6zM1.5 20.5c0-4 3.1-7 7-7s7 3 7 7zm15.6 0c0-2.3-.8-4.4-2.2-6a5.5 5.5 0 017.6 5.1v.9z'],
+  ['help', 'Help out', 'M12 2.8l9.5 8.4-1.3 1.5-1.2-1V21h-5.5v-6h-3v6H5V11.7l-1.2 1-1.3-1.5z'],
+  ['skill', 'Skills', 'M12 2a10 10 0 110 20 10 10 0 010-20zm0 3a7 7 0 100 14 7 7 0 000-14zm0 3a4 4 0 110 8 4 4 0 010-8zm0 2.5a1.5 1.5 0 100 3 1.5 1.5 0 000-3z'],
+  ['chill', 'Chill', 'M3.5 7h13v5a6 6 0 01-6 6h-1a6 6 0 01-6-6zm13 1h1.5a3 3 0 010 6h-1.6l.4-2h1.2a1 1 0 000-2h-1.5zM3 19.5h15V21H3zM8 2.5h1.6v3H8zm3.4 0H13v3h-1.6z'],
+];
+const IRL_MINS = [10, 20, 30, 45, 60];
+{
+  const x = S.irl && typeof S.irl === 'object' && !Array.isArray(S.irl) ? S.irl : {}, now = Date.now(), seen = new Set(), cats = IRL_CATS.map(c => c[0]);
+  const str = (v, n) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n) : '');
+  const num = v => typeof v === 'number' && isFinite(v) && v > 0, okId = v => typeof v === 'string' && /^[a-z0-9]{4,24}$/i.test(v);
+  const log = (Array.isArray(x.log) ? x.log : []).filter(e => e && okId(e.id) && !seen.has(e.id) && seen.add(e.id) && num(e.t0) && num(e.t1) && ['v', 'h', 'b'].includes(e.o))
+    .map(e => {
+      const o = { id: e.id, k: str(e.k, 40) || 'x', n: str(e.n, 60) || 'Phone Down', cat: cats.includes(e.cat) ? e.cat : 'chill', min: IRL_MINS.includes(e.min) ? e.min : 20,
+        t0: e.t0, t1: e.t1, m: Number.isInteger(e.m) && e.m >= 0 ? Math.min(e.m, 180) : 0, o: e.o };
+      if (Number.isInteger(e.u) && e.u >= 0) o.u = Math.min(e.u, 999);
+      if (Array.isArray(e.top)) o.top = e.top.filter(t => Array.isArray(t) && str(t[0], 30) && Number.isInteger(t[1]) && t[1] >= 0).slice(0, 3).map(t => [str(t[0], 30), Math.min(t[1], 999)]);
+      if (okId(e.ph)) o.ph = e.ph;
+      return o;
+    }).sort((a, b) => a.t0 - b.t0).slice(-1000);
+  // a running Phone Down comes back after a kill; one from the future, or that ended over a day ago (the phone's usage
+  // history can't vouch for it any more), is dropped
+  const l = x.live;
+  const live = l && okId(l.id) && num(l.t0) && IRL_MINS.includes(l.min) && l.t0 <= now + 60e3 && l.t0 + l.min * 6e4 > now - 864e5
+    ? { id: l.id, k: str(l.k, 40) || 'x', n: str(l.n, 60) || 'Phone Down', cat: cats.includes(l.cat) ? l.cat : 'chill', min: l.min, t0: l.t0, ...(typeof l.b0 === 'number' && isFinite(l.b0) ? { b0: l.b0 } : {}) } : null;
+  const iseen = new Set();
+  const ideas = (Array.isArray(x.ideas) ? x.ideas : []).filter(i => i && okId(i.id) && !iseen.has(i.id) && iseen.add(i.id) && str(i.n, 40))
+    .map(i => ({ id: i.id, n: str(i.n, 40), min: IRL_MINS.includes(i.min) ? i.min : 20, cat: cats.includes(i.cat) ? i.cat : 'chill' })).slice(0, 30);
+  const d = x.draw, f = x.f || {};
+  S.irl = { live, log, ideas, seen: (Array.isArray(x.seen) ? x.seen : []).filter(k => typeof k === 'string' && k.length <= 40).slice(-200),
+    draw: d && typeof d.k === 'string' && [0, 1, 2].includes(d.rr) && num(d.at) && d.at <= now ? { k: d.k, rr: d.rr, at: d.at } : null,
+    f: { t: [10, 30].includes(f.t) ? f.t : 0, p: ['in', 'out'].includes(f.p) ? f.p : '' } };
 }
 const save =() => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
 const $ = id => document.getElementById(id);
@@ -510,7 +555,7 @@ function renderStats() {
   $('f1').textContent = checkins().toLocaleString();
   $('f2').textContent = bestStreak();
   const r30 = rate(S.habits, 30); $('f3').textContent = r30 === null ? '–' : Math.round(r30 * 100) + '%';
-  renderQuit();
+  renderQuit(); renderIrl();
 }
 $('hmsel').onchange = e => { S.hm = e.target.value; tipKey = null; save(); renderStats(); };
 
@@ -558,6 +603,7 @@ $('erase').onclick = () => {
   if (!confirm(`Erase every habit, goal, level and fit photo on this phone? This cannot be undone.${keep.length ? ' Your screen time limit stays on till midnight.' : ''}`)) return;
   $('wo').hidden = true; $('wo').classList.remove('res'); woRes = null; stopTick(); keepOn(false); woRev++;
   ovClose(); fitReq = fitLate = null; Object.keys(fitURLs).forEach(fitForget); FitDB.clear().catch(() => {}); dlyRev++;
+  pd = null; $('pd').hidden = true; $('pdIn').innerHTML = ''; clearInterval(irlT); irlT = null; irlRev++;
   S = seed(); S.screen.plan = keep; save(); scrPush(); renderBody(); renderAll();   // native and JS agree on what is limited
 };
 
@@ -574,7 +620,7 @@ const closeSheet = () => {
   if (prevFocus && prevFocus.isConnected) prevFocus.focus({ preventScroll: true });
 };
 $('sheetbg').onclick = e => { if (e.target === $('sheetbg')) closeSheet(); };
-addEventListener('keydown', e => { if (e.key === 'Escape' && (!$('pu').hidden || $('rankup').classList.contains('open') || $('sheetbg').classList.contains('open') || !$('ov').hidden || !$('wo').hidden)) levelupBack(); });
+addEventListener('keydown', e => { if (e.key === 'Escape' && (!$('pu').hidden || $('rankup').classList.contains('open') || $('sheetbg').classList.contains('open') || !$('ov').hidden || !$('pd').hidden || !$('wo').hidden)) levelupBack(); });
 
 function habitSheet() {
   let pick = ALL.slice();
@@ -661,7 +707,7 @@ const hash01 = str => { let h = 2166136261; for (let i = 0; i < str.length; i++)
 const hitOf = (h, k) => (hash01(`${h.id}|${k}`) < CRIT_CHANCE ? HIT * 2 : HIT);
 function bossState(d = new Date()) {
   const ws = weekStart(d), key = ymd(ws), idx = ((weekIndex(ws) % BOSSES.length) + BOSSES.length) % BOSSES.length;
-  const ok = woLedger().okDays; let slots = 0, dmg = 0, hits = 0, crits = 0, wo = 0;
+  const ok = woLedger().okDays, irl = irlLedger().days; let slots = 0, dmg = 0, hits = 0, crits = 0, wo = 0, pf = 0;
   for (let i = 0; i < 7; i++) {
     const day = addDays(ws, i), k = ymd(day);
     for (const h of S.habits) {
@@ -669,9 +715,10 @@ function bossState(d = new Date()) {
       if (h.log[k]) { const v = hitOf(h, k); dmg += v; hits++; if (v > HIT) crits++; }
     }
     if (ok.has(k)) { dmg += WO_HIT; wo++; }   // a finished workout is a bonus hit, once a day
+    if (irl[k] && irl[k].v) { dmg += irl[k].v * IRL.HIT; pf += irl[k].v; }   // every checked phone-free minute hits for 5
   }
   const maxHp = Math.max(0, Math.round((slots * HIT * 0.8) / 50) * 50);
-  return { key, idx, boss: BOSSES[idx], maxHp, hp: Math.max(0, maxHp - dmg), dmg, hits, crits, wo, end: addDays(ws, 7) };
+  return { key, idx, boss: BOSSES[idx], maxHp, hp: Math.max(0, maxHp - dmg), dmg, hits, crits, wo, pf, end: addDays(ws, 7) };
 }
 function renderBoss() {
   const b = bossState(), el = $('boss');
@@ -715,9 +762,9 @@ $('boss').onclick = () => {
     <div style="display:grid;grid-template-columns:120px 1fr;gap:14px;align-items:center">
       <img src="${b.boss.art}" alt="" style="width:120px;height:120px;filter:drop-shadow(0 0 16px ${b.boss.color})">
       <div><div class="label">This week</div>
-        <p style="margin-top:8px;line-height:1.5">${b.hits} hits · ${b.crits} crits · ${b.dmg} damage · ${b.wo} workout days<br>${b.hp ? `${b.hp} HP left` : 'Defeated'} · reward ${BOSS_COINS} coins</p></div>
+        <p style="margin-top:8px;line-height:1.5">${b.hits} hits · ${b.crits} crits · ${b.wo} workout days · ${b.pf} phone-free min · ${b.dmg} damage<br>${b.hp ? `${b.hp} HP left` : 'Defeated'} · reward ${BOSS_COINS} coins</p></div>
     </div>
-    <p style="margin:14px 0 6px;color:var(--dim);line-height:1.5">Every quest you finish hits the boss for 100. Some hits are crits for 200. Finish about 4 out of 5 of this week's quests to beat it before Sunday night. A new boss shows up every Monday. A finished workout adds a 50 bonus hit, once a day.</p>
+    <p style="margin:14px 0 6px;color:var(--dim);line-height:1.5">Every quest you finish hits the boss for 100. Some hits are crits for 200. Finish about 4 out of 5 of this week's quests to beat it before Sunday night. A new boss shows up every Monday. A finished workout adds a 50 bonus hit, once a day, and every checked phone-free minute (I'm bored) hits for 5.</p>
     <p style="color:var(--dim)">Bosses beaten: <b style="color:var(--chalk)">${wins}</b></p>
     <button class="go" id="bossOk">Back to the fight</button>`, el => { el.querySelector('#bossOk').onclick = closeSheet; });
 };
@@ -794,6 +841,13 @@ const ACH = [
   { id: 'zen10', name: 'Zen Mode', desc: 'Finish 10 breathing minutes', coins: 75, test: () => dlyLedger().breaths >= 10 },
   { id: 'good7', name: 'Good Vibes', desc: 'Write down 7 good things', coins: 75, test: () => dlyLedger().n.journal >= 7 },
   { id: 'daily7', name: 'Self-Care Streak', desc: 'Daily check-in 7 days in a row', coins: 200, test: () => dlyLedger().comboBest >= 7 },
+  // I'M BORED: time off the phone (the checked ones only where the phone can check)
+  { id: 'irl1', name: 'Phone Down', desc: 'Finish your first Phone Down', coins: 25, test: () => irlLedger().done >= 1 },
+  { id: 'irlown', name: 'House Rules', desc: 'Finish one of your own ideas', coins: 50, test: () => irlLedger().own },
+  { id: 'irl25', name: 'Try Everything', desc: 'Do 25 different activities', coins: 250, test: () => irlLedger().kinds >= 25 },
+  { id: 'irl60', name: 'Off the Grid', desc: '1 hour phone-free in a day', coins: 100, only: () => irlCan(), test: () => irlLedger().maxV >= 60 },
+  { id: 'grass7', name: 'Grass Toucher', desc: '7-day Touch Grass streak', coins: 300, only: () => irlCan(), test: () => irlLedger().grassBest >= 7 },
+  { id: 'irl600', name: 'Ghost Mode', desc: '10 hours phone-free', coins: 500, only: () => irlCan(), test: () => irlLedger().vmin >= 600 },
 ];
 function unlock(id) {
   if (S.ach[id]) return;
@@ -804,7 +858,7 @@ function checkAchievements() { for (const a of ACH) if (!S.ach[a.id] && a.test &
 
 // coins are earned from what you did (so un-ticking a quest takes its coins back) minus what you spent
 const coins = () => checkins() * 10 + clearDays() * 50 + Object.keys(S.bossWins).length * BOSS_COINS
-  + ACH.reduce((a, x) => a + (S.ach[x.id] ? x.coins : 0), 0) + woLedger().coins + scrLedger().coins + dlyLedger().coins + S.bank - S.spent;
+  + ACH.reduce((a, x) => a + (S.ach[x.id] ? x.coins : 0), 0) + woLedger().coins + scrLedger().coins + dlyLedger().coins + irlLedger().coins + S.bank - S.spent;
 let shownCoins = null;
 function renderCoins() {
   const c = coins(); $('coinsN').textContent = c.toLocaleString();
@@ -849,7 +903,7 @@ function renderLocker() {
   }).join('');
   const shown = ACH.filter(a => ((!a.android || scrOn()) && (!a.only || a.only())) || S.ach[a.id]), got = shown.filter(a => S.ach[a.id]).length;
   $('trophyCount').textContent = `${got}/${shown.length}`;
-  const earn = [['+10', 'per quest'], ['+50', 'clear your day'], ['50', 'max per workout'], ['+250', 'beat the boss'],
+  const earn = [[`${IRL.V}/min`, 'phone-free (I\'m bored)'], ['+10', 'per quest'], ['+50', 'clear your day'], ['50', 'max per workout'], ['+250', 'beat the boss'],
     ...(scrOn() || scrLedger().coins > 0 ? [['60', 'max a day under your screen limit']] : []), ['10+', 'per Daily check-in'], [`+${CHECKIN_PAY}`, `${CHECKIN_N} check-ins a day`], ['25+', 'per trophy']];
   $('walletHow').innerHTML = `<span class="label">How to earn</span>` + earn.map(([v, t]) => `<span><b>${v}</b>${t}</span>`).join('');
   $('trophies').innerHTML = shown.map(a => `<div class="trophy${S.ach[a.id] ? '' : ' locked'}"><div class="medal">${TROPHY}</div><b>${esc(a.name)}</b><small>${esc(a.desc)}<br>+${a.coins} coins</small></div>`).join('');
@@ -2574,14 +2628,22 @@ function ovClose() {
 const ovTop = (mid = '', right = '<span></span>') => `<div class="pu-top"><button class="pu-x" data-o="close" aria-label="Close">${X_ICON}</button><div class="mid">${mid}</div>${right}</div>`;
 function ovRender() {
   const o = ov, el = $('ovIn'); let h = '';
-  $('ov').className = `pu ov ${o.kind}${['cam', 'review', 'view'].includes(o.step) ? ' live' : ''}`;
+  $('ov').className = `pu ov ${o.kind}${o.proof ? ' proof' : ''}${['cam', 'review', 'view', 'pview'].includes(o.step) ? ' live' : ''}`;
   if (o.step === 'cam') {
-    h = ovTop(`<b>Snap your fit</b><span id="fcTm">${S.fitCam.timer ? `${S.fitCam.timer}s timer` : 'No timer'}</span>`)
+    h = ovTop(`<b>${o.proof ? 'Snap proof' : 'Snap your fit'}</b><span id="fcTm">${S.fitCam.timer ? `${S.fitCam.timer}s timer` : 'No timer'}</span>`)
       + `<div class="pu-stage fcam${o.mirror ? ' mirror' : ''}" data-load="${o.ready ? 0 : 1}"><video id="ovVid" playsinline muted></video><div class="fc-num" id="fcNum" aria-hidden="true"></div><div class="fc-flash" id="fcFlash"></div>
         <div class="pu-load"><i></i>Starting the camera...</div></div>
       <div class="fc-tm" role="radiogroup" aria-label="Self-timer">${[0, 3, 5, 10].map(t => `<button role="radio" data-o="tm" data-t="${t}" aria-checked="${t === S.fitCam.timer}" class="${t === S.fitCam.timer ? 'on' : ''}">${t ? t + 's' : 'Off'}</button>`).join('')}</div>
       <div class="fc-ctl"><button class="fc-side" data-o="pick" aria-label="Pick from your photos">${PIC_ICON}</button><button class="fc-shut" id="fcShut" data-o="shoot" aria-label="Take the photo"><i></i></button><button class="fc-side" data-o="flip" aria-label="Switch camera">${FLIP_ICON}</button></div>
-      <p class="fc-tip" id="fcTip">${S.fitCam.timer ? 'Prop the phone up, tap, step back, pose' : 'Tap to snap'}</p><p class="sr" id="fcSay" aria-live="assertive"></p>`;
+      <p class="fc-tip" id="fcTip">${o.proof ? (S.fitCam.timer ? 'Tap, then hold it steady' : 'Tap to snap') : S.fitCam.timer ? 'Prop the phone up, tap, step back, pose' : 'Tap to snap'}</p><p class="sr" id="fcSay" aria-live="assertive"></p>`;
+  } else if (o.step === 'review' && o.proof) {   // a Phone Down proof photo: no vibe, no coins, just keep it
+    h = ovTop('<b>Your proof</b><span>Optional, just for you</span>') + `<div class="pu-stage fpic"><img src="${o.url}" alt="Your proof photo"></div>
+      <div class="pu-act"><button class="go" data-o="save">Save to IRL log</button><button class="ghost" data-o="${o.from === 'cam' ? 'retake' : 'repick'}">${o.from === 'cam' ? 'Retake' : 'Pick another'}</button></div>`;
+  } else if (o.step === 'pview') {
+    const e = S.irl.log.find(x => x.id === o.proof);
+    h = ovTop(e ? `<b>${esc(e.n)}</b><span>${fmtDate(ymd(new Date(e.t0)), { weekday: 'long', day: 'numeric', month: 'short' })}</span>` : '<b>Proof</b>')
+      + `<div class="pu-stage fpic">${e && e.ph ? `<span class="ph big">${irlIcon(e.cat)}<img data-fit="${esc(e.ph)}" data-sz="full" alt="Proof photo"></span>` : ''}</div>
+      <div class="pu-act"><div class="pair2"><button class="ghost" data-o="pdel">Delete</button><button class="go" data-o="close">Done</button></div></div>`;
   } else if (o.step === 'review' || o.step === 'view') {
     const f = o.step === 'view' && S.fits.find(x => x.id === o.id), list = S.fits.slice().reverse(), i = f ? list.indexOf(f) : -1, vibe = f ? f.vibe : o.vibe;
     h = ovTop(f ? `<b>${fmtDate(f.day, { weekday: 'long', day: 'numeric', month: 'short' })}</b><span>${i + 1} of ${list.length}</span>` : '<b>Your fit</b><span>Looking good</span>')
@@ -2592,7 +2654,7 @@ function ovRender() {
         : `<button class="go" data-o="save">${S.fits.some(x => x.day === today()) ? 'Save fit' : `Save fit · +${DLY_PAY.fit}`}</button><button class="ghost" data-o="${o.from === 'cam' ? 'retake' : 'repick'}">${o.from === 'cam' ? 'Retake' : 'Pick another'}</button>`}</div>`;
   } else if (o.step === 'err') {
     const E = { denied: ["Camera's off", 'Allow the camera in App info > Permissions > Camera, or pick a photo instead.'], busy: ['Camera busy', 'Another app is using the camera. Close it and try again, or pick a photo.'], nocam: ['No camera', "Couldn't start a camera on this phone. Pick a photo instead."] }[o.err] || ['No camera', ''];
-    h = ovTop() + `<div class="pu-body"><div class="wo-kick">Daily Fit</div><h2 class="pu-hd sm">${E[0]}</h2><p class="pu-sub">${E[1]}</p></div>
+    h = ovTop() + `<div class="pu-body"><div class="wo-kick">${o.proof ? 'Proof photo' : 'Daily Fit'}</div><h2 class="pu-hd sm">${E[0]}</h2><p class="pu-sub">${E[1]}</p></div>
       <div class="pu-act"><button class="go" data-o="pick">${PIC_ICON}Pick a photo</button>${o.err === 'denied' && scrOn() ? '<button class="ghost" data-o="settings">Open settings</button>' : ''}${o.err === 'nocam' ? '' : '<button class="ghost" data-o="retake">Try again</button>'}</div>`;
   } else if (o.kind === 'breathe') {
     const done = o.step === 'done';
@@ -2604,7 +2666,7 @@ function ovRender() {
         ${o.run ? '<button class="ghost" data-o="brstop">Stop</button>' : done ? '<button class="go" data-o="close">Done</button><button class="ghost" data-o="brgo">Again</button>' : '<button class="go" data-o="brgo">Start</button>'}</div>`;
   }
   el.innerHTML = h;
-  if (o.step === 'view') hydrate(el);
+  if (o.step === 'view' || o.step === 'pview') hydrate(el);
   if (o.step === 'cam' && o.stream) { const v = $('ovVid'); v.srcObject = o.stream; v.play().catch(() => {}); }
   if (o.step !== 'cam') el.focus({ preventScroll: true });
 }
@@ -2617,7 +2679,7 @@ $('ovIn').onclick = e => {
   else if (a === 'tm') { if (o.t0) camCancel(); S.fitCam.timer = +b.dataset.t; save(); camPaint(); }
   else if (a === 'flip') { if (o.t0) camCancel(); S.fitCam.facing = S.fitCam.facing === 'user' ? 'environment' : 'user'; save(); camStart(); }
   else if (a === 'pick' || a === 'repick') $('fitFile').click();
-  else if (a === 'retake') camOpen();
+  else if (a === 'retake') camOpen(o.proof);
   else if (a === 'settings') { let ok = false; try { ok = LevelUpAndroid.openScreenTimeSettings('appinfo') === true; } catch (e) {} if (!ok) showNote("Couldn't open Settings", 'Open Settings > Apps > LEVEL UP > Permissions', FIT_NOTE, 'Camera'); }
   else if (a === 'vibe') {
     Sound.tap(); const v = b.dataset.v, f = o.step === 'view' && S.fits.find(x => x.id === o.id);
@@ -2627,6 +2689,7 @@ $('ovIn').onclick = e => {
   else if (a === 'save') fitSave();
   else if (a === 'prev' || a === 'next') { const list = S.fits.slice().reverse(), i = list.findIndex(x => x.id === o.id), n = list[i + (a === 'next' ? 1 : -1)]; if (n) { o.id = n.id; ovRender(); } }
   else if (a === 'del') fitDelete(o.id);
+  else if (a === 'pdel') proofDelete(o.proof);
   else if (a === 'ask') { const id = o.id; ovClose(); askSheet([id]); }
   else if (a === 'brgo') brStart();
   else if (a === 'brstop') { brStop('Stopped early. Finish the whole minute to log it.'); }
@@ -2636,7 +2699,7 @@ $('ovIn').onclick = e => {
 const FIT_NOTE = dIcon('fit');
 
 /* camera: front by default (prop the phone, step back), a self-timer, the photo saved the right way round (not mirrored) */
-function camOpen() { ovOpen({ kind: 'fit', step: 'cam', ready: false }); camStart(); }
+function camOpen(proof) { ovOpen({ kind: 'fit', step: 'cam', ready: false, ...(proof ? { proof } : {}) }); camStart(); }   // proof: a Phone Down's id
 async function camStart() {
   const o = ov; if (!o) return;
   if (o.stream) { o.stream.getTracks().forEach(t => t.stop()); o.stream = null; }
@@ -2668,7 +2731,7 @@ function camPaint() {   // in place: the video element must never be rebuilt
   el.querySelectorAll('[data-o=tm]').forEach(b => { const on = +b.dataset.t === S.fitCam.timer; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
   $('fcTm').textContent = S.fitCam.timer ? `${S.fitCam.timer}s timer` : 'No timer';
   $('fcShut').classList.toggle('counting', !!o.t0); $('fcShut').setAttribute('aria-label', o.t0 ? 'Cancel the timer' : 'Take the photo');
-  $('fcTip').textContent = o.t0 ? 'Tap the button to cancel' : S.fitCam.timer ? 'Prop the phone up, tap, step back, pose' : 'Tap to snap';
+  $('fcTip').textContent = o.t0 ? 'Tap the button to cancel' : o.proof ? (S.fitCam.timer ? 'Tap, then hold it steady' : 'Tap to snap') : S.fitCam.timer ? 'Prop the phone up, tap, step back, pose' : 'Tap to snap';
 }
 function camShoot() {
   const o = ov; if (!o || !o.ready) return;
@@ -2717,6 +2780,7 @@ $('fitFile').onchange = async e => {
 };
 async function fitSave() {
   const o = ov; if (!o || o.saving) return;
+  if (o.proof) { proofSave(o); return; }
   o.saving = true;
   const id = uid() + uid(), at = Date.now();
   let stored = true;
@@ -2897,6 +2961,421 @@ window.levelupFitPollResult = (id, json) => {
   delete p.asked; save(); renderPolls();
 };
 
+/* ------------------------------------------------------------------ I'M BORED: one real-world mission, then PHONE DOWN */
+// Bored? One card, one thing to do away from the phone (2 rerolls, then it's that or "Not now"). PHONE DOWN times it from a
+// stored start (WebView timers stop in the background and the app can be killed), and at the end the Android app reads how
+// long other apps were open in that window (Usage access), so the coins pay for time really spent off the phone. Like
+// everything else, the rewards are derived from S.irl.log: un-logging takes them back and a backup can't double them.
+const IRL = { V: 2, H: 1, COIN_DAY: 120, HONOUR_DAY: 45, MIN_DAY: 120, HIT: 5, GRASS: 20, EARLY: 10, MAX_MS: 3 * 3600e3, SLACK: 2 * 60e3, SHARE: 0.1, KEEP: 15 * 60e3, RR: 2, IDEAS: 30 };
+// [key, name, how, category, minutes, 'i' inside | 'o' outside | '' either, 1 = ask a grown-up first]
+const IRL_LIST = [
+  ['walk', 'Walk a loop around the block', 'No phone, no headphones. Spot 5 things you never noticed before.', 'out', 20, 'o', 1],
+  ['clouds', 'Cloud spotting', 'Lie on the grass and find 3 clouds shaped like animals.', 'out', 10, 'o', 0],
+  ['bike', 'Go for a bike ride', 'Helmet on. Pick a route a grown-up knows about.', 'out', 45, 'o', 1],
+  ['bugs', 'Bug safari', 'Find 5 different bugs or creatures. Look closely, no squishing.', 'out', 20, 'o', 0],
+  ['stars', 'Watch the sunset or the stars', 'Find the brightest star or planet. Just look up for a while.', 'out', 20, 'o', 0],
+  ['chalk', 'Chalk a giant drawing', 'Sidewalk chalk on the drive. Go big: draw a whole game level.', 'out', 30, 'o', 1],
+  ['hunt', 'Outdoor scavenger hunt', 'Find a feather, a Y-shaped stick, something red, a smooth rock and a seed.', 'out', 30, 'o', 0],
+  ['den', 'Build a den outside', 'Branches, leaves, an old sheet. Big enough to sit in.', 'out', 45, 'o', 0],
+  ['park', 'Go to the park', 'Swings, climbing frame, whatever. Say where you are going and when you will be back.', 'out', 60, 'o', 1],
+  ['rocks', 'Find the 3 coolest rocks', 'Wash them, then give each one a name.', 'out', 20, 'o', 0],
+  ['sitout', 'Sit outside for 10 minutes', 'Count every sound you hear: birds, cars, wind, people.', 'out', 10, 'o', 0],
+  ['ball', 'Kick a ball with friends', 'Street, park or garden. Phones stay in pockets.', 'out', 60, 'o', 1],
+  ['hoops', 'Shoot 50 free throws', 'Count how many go in. Next time, beat it.', 'move', 20, 'o', 0],
+  ['wall', 'Kick a ball against a wall 100 times', 'Left foot, right foot. Control it on the way back.', 'move', 20, 'o', 0],
+  ['keepy', 'Keepy-uppy record', 'Ball on your feet. Write down your best, then beat it.', 'move', 20, 'o', 0],
+  ['dance', 'Dance to 5 songs', 'Music on, phone out of reach. Full send, nobody is watching.', 'move', 20, 'i', 0],
+  ['rope', 'Skipping rope challenge', 'How many in a row? Three tries, keep the best.', 'move', 10, '', 0],
+  ['stretch', 'Stretch for 10 minutes', 'Toes, sky, sides. Hold each stretch for 30 seconds.', 'move', 10, 'i', 0],
+  ['hand', 'Learn a handstand against a wall', 'Soft floor, clear space. Kick up, hold, count.', 'move', 20, 'i', 0],
+  ['catch', 'Play catch: 50 in a row', 'Any ball, anyone. Drop it and start again from zero.', 'move', 20, '', 0],
+  ['ninja', 'Make a ninja course', '5 obstacles, time yourself, then beat your time.', 'move', 30, 'o', 0],
+  ['balloon', 'Balloon keep-up', "Don't let it touch the floor for 5 minutes. Then add a second balloon.", 'move', 10, 'i', 0],
+  ['hundred', 'Do the 100', '25 squats, 25 jumping jacks, 25 sit-ups, 25 lunges. Go.', 'move', 10, 'i', 0],
+  ['boss', 'Draw your boss as a real monster', "This week's boss. Give it a weakness and a secret lair.", 'make', 20, 'i', 0],
+  ['story', 'Write a 5-line story', 'Start with: "The fridge door was open, and something was looking at me."', 'make', 10, 'i', 0],
+  ['comic', 'Make a 4-panel comic', 'Fold a page into 4: hero, problem, twist, ending.', 'make', 30, 'i', 0],
+  ['rap', 'Write 8 lines of rap about your day', 'At least 2 rhymes have to land. Then perform it.', 'make', 20, 'i', 0],
+  ['map', 'Draw a map of a made-up world', 'Islands, a volcano, a secret base. Name everything.', 'make', 30, 'i', 0],
+  ['card', 'Design your own player card', 'You as a card: stats, a special move, a rare border.', 'make', 20, 'i', 0],
+  ['flip', 'Make a flipbook', 'Corner of an old notebook, 20 pages, a stick figure doing a backflip.', 'make', 30, 'i', 0],
+  ['portrait', 'Draw someone in your house', 'They sit still for 10 minutes, you draw. Then show them.', 'make', 20, 'i', 0],
+  ['game', 'Invent a board game', 'Paper board, coins for pieces, 3 rules. Then play it once.', 'make', 45, 'i', 0],
+  ['beat', 'Make a beat with stuff on the table', 'Pots, pencils, a cup. Loop it 10 times without messing up.', 'make', 10, 'i', 0],
+  ['crane', 'Fold an origami crane', 'Square paper. Try 3: the third one will be good.', 'make', 20, 'i', 0],
+  ['letters', 'Draw your name in 3D letters', 'Block letters, a shadow, shading. Make it look like graffiti.', 'make', 20, 'i', 0],
+  ['tower', 'Build the tallest tower you can', 'From stuff in your room. It has to stand for 10 seconds.', 'build', 20, 'i', 0],
+  ['planes', 'Fold 3 paper planes and test them', 'Which one flies furthest? Tweak the winner and go again.', 'build', 20, '', 0],
+  ['fort', 'Build a blanket fort', 'Chairs, blankets, pegs. Big enough to read in.', 'build', 30, 'i', 0],
+  ['lego', 'Build something new with LEGO', 'No instructions. A vehicle that survives a zombie apocalypse.', 'build', 30, 'i', 0],
+  ['bridge', 'Build a paper bridge', 'Paper and tape only. It has to hold a full can.', 'build', 30, 'i', 0],
+  ['domino', 'Domino run', 'Books, dominoes, cards, anything. 50 pieces, one push.', 'build', 30, 'i', 0],
+  ['snack', 'Make a snack with a grown-up', 'Pick a recipe together. You chop and mix, they do the hot stuff.', 'build', 30, 'i', 1],
+  ['fix', 'Fix something broken', 'A loose screw, a squeaky door, a bike chain. Ask a grown-up first.', 'build', 30, '', 1],
+  ['catapult', 'Build a mini catapult', 'Pencils and rubber bands. Launch a paper ball across the room.', 'build', 30, 'i', 0],
+  ['marble', 'Make a marble run', 'Cardboard tubes, tape, a box. The marble has to take 10 seconds.', 'build', 45, 'i', 0],
+  ['bake', 'Bake something from scratch', 'Cookies, muffins, pizza dough. With a grown-up for the oven.', 'build', 60, 'i', 1],
+  ['read', 'Read 20 pages', 'Any book. Couch, bed, floor, wherever.', 'brain', 20, 'i', 0],
+  ['puzzle', 'Do a jigsaw or a Rubik\'s cube', 'Finish one section, or learn one move off by heart.', 'brain', 30, 'i', 0],
+  ['chess', 'Play a game of chess', 'Against someone at home. No hints from a screen.', 'brain', 30, 'i', 0],
+  ['sudoku', 'Do a sudoku or a crossword', 'On paper: a puzzle book, the newspaper, or draw the grid.', 'brain', 20, 'i', 0],
+  ['poem', 'Learn a poem off by heart', '8 lines. Say it out loud to someone without looking.', 'brain', 20, 'i', 0],
+  ['quiz', 'Make a quiz for your family', '10 questions about your family. Run it at dinner.', 'brain', 20, 'i', 0],
+  ['words', 'Learn 10 words in another language', 'From a book or someone who speaks it. Use them at dinner.', 'brain', 20, 'i', 0],
+  ['code', 'Invent a secret code', 'Write a message in it and see if someone can crack it.', 'brain', 20, 'i', 0],
+  ['street', 'Draw your street from memory', 'Every house, tree and sign you can remember. Then check.', 'brain', 20, '', 0],
+  ['ask', 'Ask a grown-up about when they were 13', "What did they do when they were bored? Listen to the whole story.", 'people', 10, 'i', 0],
+  ['boardgame', 'Play a board game with your family', 'Pick one off the shelf. The loser makes the drinks.', 'people', 45, 'i', 0],
+  ['cards', 'Play a card game', 'Uno, Snap, Cheat, Go Fish. Teach someone a new one.', 'people', 30, 'i', 0],
+  ['trick', 'Learn one card trick and show someone', 'From a book or a grown-up who knows one. Practise it 10 times first.', 'people', 20, 'i', 0],
+  ['jokes', 'Learn 3 jokes and tell them at dinner', 'From a joke book or a grown-up. Delivery is everything.', 'people', 10, 'i', 0],
+  ['letter', 'Write a letter on paper', 'To a friend, a grandparent or future you. Seal it.', 'people', 20, 'i', 0],
+  ['friend', 'Hang out with a friend IRL', 'Your place or theirs. Phones stay in pockets.', 'people', 60, '', 1],
+  ['teach', 'Teach someone something you know', 'A game move, a drawing trick, a fact. Then quiz them.', 'people', 10, 'i', 0],
+  ['pet', 'Play with a pet', "Fetch, tricks, brushing. No pet? Pick another card.", 'people', 20, '', 0],
+  ['shelf', 'Clean one shelf to perfection', 'Everything off, wipe it, put back only what belongs.', 'help', 20, 'i', 0],
+  ['dishes', 'Do the dishes without being asked', 'All of them. Then watch their face.', 'help', 20, 'i', 0],
+  ['dinner', 'Help make dinner', 'Ask what you can do: wash, chop, stir, set the table.', 'help', 30, 'i', 1],
+  ['carwash', 'Wash the car', 'Bucket, sponge, hose. Ask a grown-up first.', 'help', 45, 'o', 1],
+  ['room', 'Speed-clean your room', 'Floor first, then the desk, then the bed. Race the clock.', 'help', 20, 'i', 0],
+  ['laundry', 'Fold and put away the laundry', 'Yours, or the whole basket for extra respect.', 'help', 20, 'i', 0],
+  ['bins', 'Sort the recycling and take the bins out', 'Paper, plastic, glass. Rinse what needs it.', 'help', 10, '', 0],
+  ['garden', 'Help in the garden', 'Water, weed or plant something. Ask what needs doing.', 'help', 30, 'o', 0],
+  ['plants', 'Water every plant in the house', 'Check each one first: dry soil gets a drink.', 'help', 10, 'i', 0],
+  ['helpout', 'Ask someone at home what would help', 'Then do it. No complaining, full effort.', 'help', 20, 'i', 0],
+  ['juggle', 'Learn to juggle 3 things', 'Rolled-up socks are perfect. Start with 2.', 'skill', 20, 'i', 0],
+  ['knots', 'Learn 3 knots', 'Reef knot, bowline, figure eight. A shoelace works.', 'skill', 20, 'i', 0],
+  ['eggs', 'Learn to cook eggs 2 ways', 'Scrambled and fried, with a grown-up by the stove.', 'skill', 30, 'i', 1],
+  ['button', 'Sew on a button', 'Needle, thread, an old shirt. Ask a grown-up to show you.', 'skill', 20, 'i', 1],
+  ['whistle', 'Learn to whistle with your fingers', 'Wet fingers, tongue back, blow. Takes a few tries.', 'skill', 10, '', 0],
+  ['shuffle', 'Shuffle cards like a pro', 'Riffle, bridge, overhand. 50 shuffles.', 'skill', 10, 'i', 0],
+  ['pen', 'Learn to spin a pen on your fingers', 'Thumb-around first. Over a bed so it lands soft.', 'skill', 20, 'i', 0],
+  ['tie', 'Learn to tie a tie', 'Borrow one. Ask a grown-up to check the knot.', 'skill', 10, 'i', 0],
+  ['nothing', 'Do nothing for 10 minutes', 'Lie down, eyes open. Boredom is where ideas come from.', 'chill', 10, 'i', 0],
+  ['window', 'Sketch the view from a window', 'Whatever is out there. 10 minutes, no rubbing out.', 'chill', 10, 'i', 0],
+  ['notebook', 'Write a page in a notebook', "What's on your mind. Nobody reads it but you.", 'chill', 10, 'i', 0],
+  ['cocoa', 'Make a hot chocolate and drink it slowly', 'Ask before using the kettle. Just the drink and the view.', 'chill', 10, 'i', 1],
+  ['bath', 'Take a long bath or shower', 'Your best ideas will turn up in there.', 'chill', 20, 'i', 0],
+];
+const IRL_DECK = IRL_LIST.map(([k, n, how, cat, min, p, g]) => ({ k, n, how, cat, min, p: p === 'i' ? 'in' : p === 'o' ? 'out' : '', g }));
+const DICE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 2.5h13a3 3 0 013 3v13a3 3 0 01-3 3h-13a3 3 0 01-3-3v-13a3 3 0 013-3zM8 6.3a1.7 1.7 0 100 3.4 1.7 1.7 0 000-3.4zm8 0a1.7 1.7 0 100 3.4 1.7 1.7 0 000-3.4zm-4 4a1.7 1.7 0 100 3.4 1.7 1.7 0 000-3.4zm-4 4a1.7 1.7 0 100 3.4 1.7 1.7 0 000-3.4zm8 0a1.7 1.7 0 100 3.4 1.7 1.7 0 000-3.4z" fill="currentColor" fill-rule="evenodd"/></svg>';
+const PHONE_DOWN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 1.5h9a2.5 2.5 0 012.5 2.5v16a2.5 2.5 0 01-2.5 2.5h-9A2.5 2.5 0 015 20V4a2.5 2.5 0 012.5-2.5zM9 4.2a1.6 1.6 0 100 3.2 1.6 1.6 0 000-3.2zm3.8 0a1.6 1.6 0 100 3.2 1.6 1.6 0 000-3.2z" fill="currentColor" fill-rule="evenodd"/></svg>';
+// the big moment: the back of a phone, face down in the grass
+const GRASS_IMG = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><defs><clipPath id="c"><circle cx="100" cy="100" r="80"/></clipPath></defs><circle cx="100" cy="100" r="94" fill="#b6f24a"/><circle cx="100" cy="100" r="80" fill="#162a0c"/><g clip-path="url(#c)"><g transform="rotate(-16 100 100)"><rect x="64" y="34" width="72" height="120" rx="16" fill="#b6f24a"/><rect x="76" y="46" width="30" height="30" rx="9" fill="#162a0c"/><circle cx="84" cy="54" r="4.5" fill="#b6f24a"/><circle cx="98" cy="54" r="4.5" fill="#b6f24a"/><circle cx="84" cy="68" r="4.5" fill="#b6f24a"/></g><path d="M0 200V146l12 14 8-30 10 32 10-40 9 38 12-28 7 30 11-44 9 42 10-30 8 30 12-36 8 36 10-26 9 28 12-34 8 32 5-14v60z" fill="#7cd23a"/><path d="M0 200v-30l14 12 10-22 9 24 12-26 10 26 12-20 9 22 12-28 10 26 11-18 10 22 13-26 9 24 12-18 11 20 6-10v40z" fill="#5fae2a"/></g></svg>');
+
+const irlCan = () => !!(window.LevelUpAndroid && typeof LevelUpAndroid.phoneUseBetween === 'function');
+const irlCat = id => IRL_CATS.find(c => c[0] === id) || IRL_CATS[IRL_CATS.length - 1];
+const irlIcon = id => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${irlCat(id)[2]}" fill="currentColor" fill-rule="evenodd"/></svg>`;
+const irlDeck = () => IRL_DECK.concat(S.irl.ideas.map(i => ({ k: 'c:' + i.id, n: i.n, how: 'One of your own ideas. Make it count.', cat: i.cat, min: i.min, p: '', g: 0, own: 1 })));
+const irlFind = k => irlDeck().find(a => a.k === k) || null;
+const irlFits = a => (!S.irl.f.t || a.min <= S.irl.f.t) && (!S.irl.f.p || !a.p || a.p === S.irl.f.p);
+const irlEnd = L => L.t0 + L.min * 6e4;
+
+// the ledger: coins (2 a verified minute, 1 on the honour system; 120 a day, 45 of it honour), minutes (120 a day count),
+// boss damage and the Touch Grass streak from verified minutes only. Memoized like the others.
+let irlRev = 0, irlMemo = null;   // irlRev++ on every write to S.irl.log (erase/import replace S, which also invalidates)
+function irlLedger() {
+  const t = today(), now = Date.now();
+  if (irlMemo && irlMemo.rev === irlRev && irlMemo.s === S && irlMemo.t === t) return irlMemo.v;
+  const days = {}, per = {}, kinds = new Set(); let coins = 0, vmin = 0, done = 0, own = false, end = 0;
+  for (const e of S.irl.log) {
+    // farming guards: no overlap with the one before, nothing that runs backwards, lasts over 3 hours or starts in the future
+    if (e.t0 < end || !(e.t1 > e.t0) || e.t1 - e.t0 > IRL.MAX_MS || e.t0 > now + 60e3) continue;
+    end = e.t1;
+    const k = ymd(new Date(e.t0)), d = days[k] || (days[k] = { m: 0, v: 0, c: 0, h: 0 }), ver = e.o === 'v';
+    const m = Math.max(0, Math.min(e.m, e.min, Math.floor((e.t1 - e.t0) / 6e4), IRL.MIN_DAY - d.m));
+    const c = Math.max(0, Math.min(m * (ver ? IRL.V : IRL.H), IRL.COIN_DAY - d.c, ver ? Infinity : IRL.HONOUR_DAY - d.h));
+    d.m += m; d.c += c; coins += c; if (ver) { d.v += m; vmin += m; } else d.h += c;
+    per[e.id] = { m, c, hp: ver ? m * IRL.HIT : 0 };
+    if (e.o !== 'b') { done++; kinds.add(e.k); if (e.k.startsWith('c:')) own = true; }
+  }
+  const grass = new Set(Object.keys(days).filter(k => days[k].v >= IRL.GRASS));
+  let run = 0, best = 0, x = 0, prev = null, d = new Date();
+  if (!grass.has(ymd(d))) d = addDays(d, -1);
+  while (grass.has(ymd(d))) { run++; d = addDays(d, -1); }
+  for (const k of [...grass].sort()) { x = prev && ymd(addDays(new Date(prev + 'T12:00:00'), 1)) === k ? x + 1 : 1; prev = k; best = Math.max(best, x); }
+  const ws = ymd(weekStart()), all = Object.values(days);
+  const v = { coins, days, per, vmin, done, own, kinds: kinds.size, grassRun: run, grassBest: best, today: days[t] || { m: 0, v: 0, c: 0, h: 0 },
+    week: Object.keys(days).filter(k => k >= ws).reduce((a, k) => a + days[k].m, 0), best: Math.max(0, ...all.map(y => y.m)), maxV: Math.max(0, ...all.map(y => y.v)) };
+  irlMemo = { rev: irlRev, s: S, t, v };
+  return v;
+}
+// what a mission pays today if the phone stays down (the daily caps included)
+function irlPay(min) {
+  const T = irlLedger().today, room = Math.max(0, IRL.MIN_DAY - T.m);
+  return irlCan() ? Math.min(Math.min(min, room) * IRL.V, IRL.COIN_DAY - T.c) : Math.max(0, Math.min(Math.min(min, room) * IRL.H, IRL.COIN_DAY - T.c, IRL.HONOUR_DAY - T.h));
+}
+
+/* the deck: no repeats till every card that fits the filters has come up; your own ideas come up 3x as often */
+function irlPick(not) {
+  const fit = irlDeck().filter(irlFits);
+  if (!fit.length) return null;
+  let pool = fit.filter(a => a.k !== not && !S.irl.seen.includes(a.k));
+  if (!pool.length) { const ks = new Set(fit.map(a => a.k)); S.irl.seen = S.irl.seen.filter(k => !ks.has(k)); pool = fit.filter(a => a.k !== not); }
+  if (!pool.length) pool = fit;
+  let r = Math.random() * pool.reduce((a, c) => a + (c.own ? 3 : 1), 0), i = 0;
+  while (i < pool.length - 1 && (r -= pool[i].own ? 3 : 1) >= 0) i++;
+  S.irl.seen = S.irl.seen.filter(k => k !== pool[i].k).concat(pool[i].k).slice(-200);
+  return pool[i];
+}
+// the card on the table stays for 15 minutes, so closing and reopening isn't a free reroll
+function irlDraw() {
+  const d = S.irl.draw, now = Date.now();
+  if (d && now >= d.at && now - d.at < IRL.KEEP && irlFind(d.k)) return d;
+  const a = irlPick(); S.irl.draw = a ? { k: a.k, rr: 0, at: now } : null; save();
+  return S.irl.draw;
+}
+function irlReroll() {
+  const d = irlDraw(); if (!d || d.rr >= IRL.RR) { Sound.nope(); return false; }
+  const a = irlPick(d.k); if (!a) return false;
+  S.irl.draw = { k: a.k, rr: d.rr + 1, at: d.at }; save(); return true;
+}
+// a filter only re-deals when the card on the table doesn't fit it, and that costs a reroll
+function irlFilter(key, v) {
+  S.irl.f[key] = v; const d = irlDraw(), a = d && irlFind(d.k);
+  if (a && !irlFits(a) && d.rr < IRL.RR) irlReroll(); else save();
+}
+
+/* PHONE DOWN: start, come back, finish. One at a time; the window is checked against the phone's usage history */
+// when the phone booted, by its own clock: if that moves, the clock was changed (or the phone restarted) mid-session
+function irlBoot() { try { const r = JSON.parse(LevelUpAndroid.clock()); return r && r.now > 0 && r.up >= 0 ? r.now - r.up : null; } catch (e) { return null; } }
+function irlStart() {
+  if (S.irl.live) { pdOpen('back'); return; }
+  const d = S.irl.draw, a = d && irlFind(d.k); if (!a) return;
+  const b0 = window.LevelUpAndroid && typeof LevelUpAndroid.clock === 'function' ? irlBoot() : null;
+  S.irl.live = { id: uid(), k: a.k, n: a.n, cat: a.cat, min: a.min, t0: Date.now(), ...(b0 !== null ? { b0 } : {}) };
+  S.irl.draw = null; save(); Sound.go(); buzz([20, 40, 20]);
+  pd = { step: 'live' }; $('pd').hidden = false; pdRender(); irlTicker(); renderBored();
+}
+function irlStop() {   // under 10 minutes: nothing to log
+  if (!S.irl.live || !confirm('Stop Phone Down? Under 10 minutes doesn\'t count.')) return;
+  S.irl.live = null; save(); irlTicker(); pdClose(); Sound.uncheck();
+  showNote('Phone Down stopped', 'No worries. Tap I\'m bored when you want another go.', PHONE_DOWN, "I'm bored");
+}
+function irlFinish() {
+  const L = S.irl.live; if (!L) return;
+  const now = Date.now(), end = Math.min(now, irlEnd(L)), hpBefore = bossState().hp;
+  // the clock moved forward mid-session (time since boot didn't): those minutes never happened
+  const b1 = L.b0 !== undefined ? irlBoot() : null, drift = b1 !== null && b1 - L.b0 > 60e3 ? b1 - L.b0 : 0, len = end - L.t0 - drift;
+  S.irl.live = null; irlTicker();
+  if (!(len > 0) || len > IRL.MAX_MS) { save(); pdClose(); Sound.nope(); showNote("That one didn't count", "The phone's clock changed while it ran.", PHONE_DOWN, "I'm bored"); return; }
+  let r = null;
+  if (irlCan()) try { r = JSON.parse(LevelUpAndroid.phoneUseBetween(L.t0, L.t0 + len)); } catch (e) { r = null; }
+  const ok = !!(r && r.ok && typeof r.ms === 'number' && r.ms >= 0), use = ok ? r.ms : 0;
+  const o = !ok ? 'h' : use <= Math.max(IRL.SLACK, len * IRL.SHARE) ? 'v' : 'b';
+  const e = { id: uid(), k: L.k, n: L.n, cat: L.cat, min: L.min, t0: L.t0, t1: L.t0 + len, m: Math.floor((o === 'b' ? Math.max(0, len - use) : len) / 6e4), o };
+  if (ok) e.u = Math.round(use / 6e4);
+  if (o === 'b') e.top = (Array.isArray(r.top) ? r.top : []).filter(x => x && typeof x.label === 'string' && x.label && x.ms >= 0).slice(0, 3).map(x => [x.label.slice(0, 30), Math.round(x.ms / 6e4)]);
+  S.irl.log.push(e); irlRev++; save();
+  const I = irlLedger(), got = I.per[e.id] || { m: 0, c: 0, hp: 0 }, b = bossState();
+  pd = { step: 'res', id: e.id, c: got.c, m: got.m, hp: Math.max(0, hpBefore - b.hp), boss: b.boss.name, why: ok ? '' : irlCan() ? 'access' : 'browser' };
+  $('pd').hidden = false; closeSheet(); pdRender(); renderAll();
+  if (o === 'v') celebrate({ hd: 'Phone-free!', from: `${e.n} · ${got.m} min`, img: GRASS_IMG, name: got.c ? `+${got.c} coins` : `${got.m} min`, color: '#b6f24a', sound: 'clear' });
+  else if (o === 'h') { Sound.clear(); buzz([15, 40, 15]); } else Sound.check();
+}
+// back in the app mid-session (or after a kill): time up checks it, otherwise "Back already?"
+function irlReturn() {
+  const L = S.irl.live; if (!L || !$('pu').hidden) return;
+  if (Date.now() >= irlEnd(L)) { irlFinish(); return; }
+  if (pd && pd.step === 'back') { pdRender(); return; }
+  closeSheet(); pd = { step: 'back' }; $('pd').hidden = false; pdRender();
+}
+let irlT = null;
+function irlTicker() { if (S.irl.live && !irlT) irlT = setInterval(irlTick, 1000); else if (!S.irl.live && irlT) { clearInterval(irlT); irlT = null; } }
+function irlTick() {
+  const L = S.irl.live; if (!L) { irlTicker(); return; }
+  if (document.hidden) return;
+  const now = Date.now();
+  if (now >= irlEnd(L)) { if ($('pu').hidden && $('ov').hidden) irlFinish(); return; }
+  paintBoredLive(now);
+  if (pd && (pd.step === 'live' || pd.step === 'back')) pdPaint(now);
+}
+
+/* Home and Daily: the I'M BORED slab (PHONE DOWN with a countdown while one runs) */
+function renderBored() {
+  const L = S.irl.live, I = irlLedger(), m = I.today.m;
+  for (const id of ['bored', 'boredD']) {
+    const el = $(id);
+    el.className = `bored${L ? ' live' : ''}`;
+    el.innerHTML = `<span class="ic">${L ? PHONE_DOWN : DICE}</span><span class="tx"><b>${L ? 'Phone down' : "I'm bored"}</b><small></small></span><span class="play">${PLAY}</span>`;
+    if (!L) el.querySelector('small').textContent = m ? `Phone-free today: ${fmtMins(m)}${I.grassRun ? ` · ${I.grassRun} day streak` : ''}` : `Get a mission · +${irlCan() ? IRL.V : IRL.H}/min`;
+    el.setAttribute('aria-label', L ? 'Phone Down running. Open it' : `I'm bored: deal a real-world mission. Phone-free today: ${m} minutes`);
+  }
+  if (L) paintBoredLive();
+}
+function paintBoredLive(now = Date.now()) {
+  const L = S.irl.live; if (!L) return;
+  const left = irlEnd(L) - now, t = left > 0 ? `${fmtClock(left)} left · ${L.n}` : "Time's up · tap to check in";
+  for (const id of ['bored', 'boredD']) { const s = $(id).querySelector('small'); if (s && s.textContent !== t) s.textContent = t; }
+}
+['bored', 'boredD'].forEach(id => { $(id).onclick = () => { Sound.tap(); if (S.irl.live) irlReturn(); else pdOpen('deal'); }; });
+
+/* the full-screen I'M BORED screen (#pd): the card, PHONE DOWN, the result. Above the workout, below the Daily camera and sheets */
+let pd = null;   // the open screen (never saved): {step: 'deal' | 'live' | 'back' | 'res', ...result}
+function pdOpen(step) { closeSheet(); pd = { step }; $('pd').hidden = false; if (step === 'deal') irlDraw(); pdRender(); }
+function pdClose() { pd = null; $('pd').hidden = true; $('pdIn').innerHTML = ''; renderBored(); }
+// Back / the arrow while one runs: only the screen goes, the session keeps counting
+function pdHide() { pdClose(); if (S.irl.live) showNote('Phone Down is still on', 'It keeps counting. Phone down, go do the thing.', PHONE_DOWN, "I'm bored"); }
+function pdBack() { if (pd && (pd.step === 'live' || pd.step === 'back') && S.irl.live) pdHide(); else pdClose(); }
+const HIDE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9l7 7 7-7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+function pdRender() {
+  const p = pd, el = $('pdIn'); if (!p) return;
+  const top = (mid, hide) => `<div class="pu-top"><button class="pu-x" data-p="${hide ? 'hide' : 'close'}" aria-label="${hide ? 'Hide, Phone Down keeps going' : 'Close'}">${hide ? HIDE_ICON : X_ICON}</button><div class="mid">${mid}</div><span></span></div>`;
+  let h = '';
+  $('pd').className = `pu pd ${p.step}`;
+  if (p.step === 'deal') {
+    const d = irlDraw(), a = d && irlFind(d.k), f = S.irl.f, left = d ? IRL.RR - d.rr : 0, pay = a ? irlPay(a.min) : 0, T = irlLedger().today, fresh = !!a && p.k !== a.k;
+    if (a) p.k = a.k;   // only a new card is dealt in (a filter tap that keeps it doesn't replay the deal)
+    const seg = (key, opts) => `<div class="bd-seg" role="group" aria-label="${key === 't' ? 'Time you have' : 'Where'}">${opts.map(([v, t]) => `<button data-p="f${key}" data-v="${v}" class="${f[key] === v ? 'on' : ''}" aria-pressed="${f[key] === v}"${!left && f[key] !== v ? ' disabled' : ''}>${t}</button>`).join('')}</div>`;
+    h = top(`<b>I'm bored</b><span>${T.m ? `Phone-free today: ${fmtMins(T.m)}` : 'Your mission'}</span>`)
+      + `<div class="bd-f">${seg('t', [[10, '10 min'], [30, '30 min'], [0, '1 hr+']])}${seg('p', [['', 'Anywhere'], ['in', 'Inside'], ['out', 'Outside']])}</div>`
+      + (a ? `<article class="bd-card${fresh ? ' new' : ''}" aria-live="polite"><div class="bd-top"><span class="ic">${irlIcon(a.cat)}</span><span class="label">${irlCat(a.cat)[1]}${a.own ? ' · your idea' : ''}</span>
+          <span class="bd-coin" aria-label="${pay ? `Up to ${pay} coins` : 'Daily coin max reached'}">${pay ? `${COIN_SM}+${pay}` : 'Max today'}</span></div>
+          <h2 class="bd-nm">${esc(a.n)}</h2><p class="bd-how">${esc(a.how)}</p>
+          <div class="bd-chips"><span class="t">${a.min} min</span>${a.p ? `<span>${a.p === 'out' ? 'Outside' : 'Inside'}</span>` : ''}${a.g ? '<span class="g">Ask a grown-up first</span>' : ''}</div></article>`
+        : '<p class="empty">Nothing fits those filters. Try another time.</p>')
+      + `<div class="pu-act"><button class="go" data-p="start"${a ? '' : ' disabled'}>${PHONE_DOWN}Start phone down</button>
+        <div class="pair2 bd-two"><button class="ghost" data-p="reroll"${left ? '' : ' disabled'}>${left ? `Reroll · ${left} left` : 'No rerolls'}</button><button class="ghost" data-p="later">Not now</button></div>
+        <p class="pu-fine">${irlCan() ? `Phone face down pays ${IRL.V} coins a minute, checked when you're back.` : `Pays ${IRL.H} coin a minute here. The Android app checks it and pays double.`}${pay ? '' : ` That's today's ${IRL.COIN_DAY} coins: minutes still count for the boss and your streak.`}</p>
+        <button class="act quiet bd-ideas" data-p="ideas">Your own ideas${S.irl.ideas.length ? ` (${S.irl.ideas.length})` : ''}</button></div>`;
+  } else if (p.step === 'live' || p.step === 'back') {
+    const L = S.irl.live; if (!L) { pdClose(); return; }
+    const a = irlFind(L.k), back = p.step === 'back', el2 = Date.now() - L.t0, early = el2 >= IRL.EARLY * 6e4;
+    h = top(`<b>Phone down</b><span>${L.min} min · ${irlCat(L.cat)[1]}</span>`, true)
+      + `<div class="pu-body pd-body"><div class="wo-kick">${back ? 'Back already?' : esc(L.n)}</div>
+        <div class="ring pd-ring"><svg viewBox="0 0 100 100" aria-hidden="true"><circle class="trk" cx="50" cy="50" r="45" pathLength="100"/><circle class="halo" cx="50" cy="50" r="45" pathLength="100"/><circle class="fil" cx="50" cy="50" r="45" pathLength="100"/></svg>
+          <output><span id="pdLeft"></span><small>left</small></output></div>
+        <h2 class="pd-hd">${back ? 'Your mission is still on' : 'Put your phone face down and go'}</h2>
+        <p class="pu-sub pd-sub">${back ? `${esc(L.n)}. Phone down and back to it.` : esc(a ? a.how : L.n)}</p></div>
+      <div class="pu-act">${back ? '<button class="go" data-p="keep">Keep going</button>' : ''}
+        <button class="ghost" data-p="${early ? 'early' : 'stop'}">${early ? `I'm done early · ${Math.floor(el2 / 6e4)} min` : 'Stop'}</button>
+        <p class="pu-fine">${irlCan() ? "It's checked when you're back: time in other apps counts, LEVEL UP doesn't." : 'Come back when the time is up.'} Under ${IRL.EARLY} minutes doesn't count.</p></div>`;
+  } else {   // res
+    const e = S.irl.log.find(x => x.id === p.id); if (!e) { pdClose(); return; }
+    const I = irlLedger(), top3 = e.top || [], streak = e.o === 'v' && I.grassRun && I.today.v >= IRL.GRASS;
+    const hd = e.o === 'v' ? 'Verified phone-free' : e.o === 'b' ? 'Your phone was busy' : 'Mission done';
+    const busy = top3.length ? `${e.u} min on ${top3.slice(0, 2).map(t => esc(t[0])).join(' and ')}` : `${e.u} min in other apps`;
+    const sub = e.o === 'v' ? `${esc(e.n)}: ${p.m} minutes with the phone down. That's the stuff.`
+      : e.o === 'b' ? `${busy}. It's still in your log, with the ${p.m} phone-free ${p.m === 1 ? 'minute' : 'minutes'}. Face down next time for the full reward.`
+      : `${esc(e.n)}: ${p.m} minutes. ${p.why === 'access' ? 'Turn on screen-time access so LEVEL UP can check it: checked minutes pay double.' : 'The Android app checks it and pays double.'}`;
+    const capped = p.c < p.m * (e.o === 'v' ? IRL.V : IRL.H);
+    h = top('<b>Phone down</b><span>Done</span>')
+      + `<div class="pu-body pd-res"><div class="wo-kick">${esc(e.n)}</div><h2 class="res-hd${e.o === 'b' ? ' short' : ''}">${hd}</h2><p class="res-sub">${sub}</p>
+        <div class="loot" style="--n:3"><div class="c"><b>+${p.c}</b><span class="label">Coins</span></div><div class="q"><b>${p.m}</b><span class="label">Minutes</span></div>
+          ${p.hp ? `<div class="h"><b>-${p.hp}</b><span class="label">Boss HP</span></div>` : `<div class="s${streak ? '' : ' dim'}"><b>${I.grassRun}</b><span class="label">Grass streak</span></div>`}</div>
+        ${streak ? `<p class="res-tip">${FLAME} ${I.grassRun} day Touch Grass streak</p>` : capped ? `<p class="res-tip">Today's coin max is ${IRL.COIN_DAY}: the minutes still count.</p>` : ''}
+        ${e.ph ? `<div class="pd-proof">${irlThumb(e)}<span><b>Proof saved</b><small>In your IRL log on Stats</small></span></div>` : `<button class="fbtn pd-snap" data-p="proof">${CAM_ICON}Snap proof<small>optional</small></button>`}
+        ${p.why === 'access' ? '<button class="act" data-p="access">Turn on screen-time access</button>' : ''}</div>
+      <div class="pu-act">${window.LevelUpAndroid && typeof LevelUpAndroid.minimize === 'function' ? '<button class="go" data-p="bye">Nice. Close the app?</button><button class="ghost" data-p="close">Done</button>' : '<button class="go" data-p="close">Done</button>'}</div>`;
+  }
+  el.innerHTML = h;
+  if (p.step === 'live' || p.step === 'back') pdPaint();
+  if (p.step === 'res') hydrate(el);
+  el.focus({ preventScroll: true });
+}
+function pdPaint(now = Date.now()) {   // the countdown, in place
+  const L = S.irl.live, o = $('pdLeft'); if (!L || !o) return;
+  const left = Math.max(0, irlEnd(L) - now), t = fmtS(Math.floor((left + 999) / 1000));   // 60:00, never 1:00:00
+  if (o.textContent !== t) o.textContent = t;
+  const pct = left / (L.min * 6e4) * 100;   // the ring is the time left: full at the start, empty at the end
+  $('pdIn').querySelectorAll('.pd-ring .fil, .pd-ring .halo').forEach(c => { c.style.strokeDasharray = `${pct.toFixed(2)} 100`; c.style.opacity = pct < 0.5 ? 0 : ''; });
+  const g = $('pdIn').querySelector('[data-p=stop]');
+  if (g && now - L.t0 >= IRL.EARLY * 6e4) pdRender();   // 10 minutes in: Stop becomes "I'm done early"
+}
+$('pdIn').onclick = e => {
+  const b = e.target.closest('[data-p]'); if (!b || b.disabled || !pd) return;
+  const a = b.dataset.p;
+  if (a !== 'start' && a !== 'access') Sound.tap();
+  if (a === 'close' || a === 'later') pdClose();
+  else if (a === 'hide') pdHide();
+  else if (a === 'ft' || a === 'fp') { irlFilter(a[1], a === 'ft' ? +b.dataset.v : b.dataset.v); pdRender(); }
+  else if (a === 'reroll') { if (irlReroll()) { pdRender(); const c = $('pdIn').querySelector('[data-p=reroll]'); if (c && !c.disabled) c.focus({ preventScroll: true }); } }
+  else if (a === 'start') irlStart();
+  else if (a === 'ideas') ideasSheet();
+  else if (a === 'keep') { pd.step = 'live'; pdRender(); try { if (window.LevelUpAndroid && typeof LevelUpAndroid.minimize === 'function') LevelUpAndroid.minimize(); } catch (x) {} }   // back out the door
+  else if (a === 'early') irlFinish();
+  else if (a === 'stop') irlStop();
+  else if (a === 'proof') camOpen(pd.id);
+  else if (a === 'access') scrOpenSettings('usage');
+  else if (a === 'bye') { pdClose(); try { LevelUpAndroid.minimize(); } catch (x) {} }
+};
+
+/* proof photos: optional, the Daily camera's screen and IndexedDB store (never in a backup), shown in the IRL log */
+const irlThumb = e => `<span class="ph">${irlIcon(e.cat)}<img data-fit="${esc(e.ph)}" data-sz="thumb" alt=""></span>`;
+async function proofSave(o) {
+  const e = S.irl.log.find(x => x.id === o.proof);
+  o.saving = true;
+  const id = uid() + uid();
+  try { await FitDB.put({ id, full: o.full, thumb: o.thumb, at: Date.now() }); }
+  catch (err) { o.saving = false; Sound.nope(); showNote("Couldn't save the photo", "This phone wouldn't store it. Your minutes still count.", PHONE_DOWN, "I'm bored"); return; }
+  if (e) { if (e.ph) { FitDB.del(e.ph).catch(() => {}); fitForget(e.ph); } e.ph = id; save(); }
+  if (ov === o) ovClose();
+  Sound.buy(); buzz(20);
+  if (pd && pd.step === 'res') pdRender();
+  if ($('v-stats').classList.contains('on')) renderIrl();
+}
+function proofDelete(id) {
+  const e = S.irl.log.find(x => x.id === id); if (!e || !e.ph || !confirm('Delete this photo? The minutes stay in your log.')) return;
+  FitDB.del(e.ph).catch(() => {}); fitForget(e.ph); delete e.ph; save(); ovClose();
+  if ($('v-stats').classList.contains('on')) renderIrl();
+}
+
+/* your own ideas: a short list anyone at home can add to (the parent sheet) */
+function ideasSheet() {
+  let mins = 20;
+  const draw = () => `<h2>Your own ideas</h2><p class="dim">Things to do at home, from you or your family. They come up 3x as often when you tap I'm bored.</p>
+    ${S.irl.ideas.length ? `<div class="idl">${S.irl.ideas.map(i => `<div class="idr"><span class="ic">${irlIcon(i.cat)}</span><span class="grow"><b>${esc(i.n)}</b><small>${i.min} min · ${irlCat(i.cat)[1]}</small></span><button class="act quiet" data-rm="${i.id}" aria-label="Remove ${esc(i.n)}">Remove</button></div>`).join('')}</div>`
+      : '<p class="empty">No ideas yet. Try "Fix the bike with Dad" or "Bake cookies with Gran".</p>'}
+    ${S.irl.ideas.length < IRL.IDEAS ? `<span class="label idh">Add one</span><label class="field"><span class="sr">Idea</span><input id="iN" maxlength="40" placeholder="Build a birdhouse with Grandpa" autocomplete="off"></label>
+    <div class="field"><span class="label">Minutes</span><div class="lim l5" id="iM">${IRL_MINS.map(m => `<button data-m="${m}" class="${m === mins ? 'on' : ''}" aria-pressed="${m === mins}"><b>${m}</b></button>`).join('')}</div></div>
+    <label class="field"><span class="label">Kind</span><select id="iC">${IRL_CATS.map(([id, n]) => `<option value="${id}"${id === 'build' ? ' selected' : ''}>${n}</option>`).join('')}</select></label>
+    <button class="go" id="iAdd" disabled>Add idea</button>` : `<p class="dim">That's ${IRL.IDEAS}: remove one to add another.</p>`}`;
+  const bind = el => {
+    const N = el.querySelector('#iN'), go = el.querySelector('#iAdd');
+    const redraw = sel => { el.innerHTML = draw().replace('<h2>', '<h2 id="sheetTitle">'); bind(el); const f = sel && el.querySelector(sel); if (f) f.focus({ preventScroll: true }); };
+    el.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => {
+      const i = S.irl.ideas.find(x => x.id === b.dataset.rm); if (!i) return;
+      S.irl.ideas = S.irl.ideas.filter(x => x !== i); save(); Sound.uncheck(); redraw('#iN');
+      if (pd && pd.step === 'deal') pdRender();
+    });
+    if (!N) return;
+    const valid = () => { go.disabled = !N.value.trim(); };
+    N.oninput = valid; N.onkeydown = e => { if (e.key === 'Enter' && !go.disabled) go.click(); };
+    el.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { mins = +b.dataset.m; Sound.tap(); el.querySelectorAll('[data-m]').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', x === b); }); });
+    go.onclick = () => {
+      const n = N.value.replace(/\s+/g, ' ').trim().slice(0, 40); if (!n || S.irl.ideas.length >= IRL.IDEAS) return;
+      S.irl.ideas.push({ id: uid(), n, min: mins, cat: el.querySelector('#iC').value }); save(); Sound.check(); buzz(12); redraw('#iN');
+      if (pd && pd.step === 'deal') pdRender();
+    };
+  };
+  openSheet(draw(), bind);
+}
+$('ideasOpen').onclick = () => { Sound.tap(); ideasSheet(); };
+
+/* Stats: this week, the best day, the streak, and the IRL log (proof photos as thumbnails) */
+let irlAll = false;
+function renderIrl() {
+  const I = irlLedger(), el = $('pf'), list = S.irl.log.slice().reverse().filter(e => I.per[e.id]), show = irlAll ? list : list.slice(0, 5);
+  $('pfStreak').hidden = !I.grassRun; $('pfStreakN').textContent = I.grassRun;
+  $('pfStreak').setAttribute('aria-label', `${I.grassRun} day Touch Grass streak`);
+  const bars = weekCols(k => { const d = I.days[k], m = d ? d.m : 0; return `<i class="${d && d.v >= IRL.GRASS ? 'hit' : ''}" style="--h:${Math.min(100, m / 60 * 100).toFixed(0)}%"><b>${m || ''}</b></i>`; });
+  const tag = { v: 'Verified', h: 'Honour', b: 'Phone busy' };
+  el.innerHTML = `<div class="figures pf-fig"><div><b>${I.week}</b><span class="label">Min this week</span></div><div><b>${I.best}</b><span class="label">Best day</span></div><div><b>${I.grassRun}</b><span class="label">Grass streak</span></div></div>
+    <div class="panel pf-wk"><div class="wkc bars pf-bars">${bars}</div><p class="dim">Phone-free minutes a day. Green: ${IRL.GRASS}+ checked minutes, a Touch Grass day.</p></div>
+    <div class="sec"><h2>IRL log <small>${list.length || ''}</small></h2></div>
+    ${list.length ? `<div class="rows">${show.map(e => `<div class="irow${e.o === 'b' ? ' busy' : ''}">${e.ph ? `<button class="irow-ph" data-pf="ph" data-id="${e.id}" aria-label="Proof photo: ${esc(e.n)}">${irlThumb(e)}</button>` : `<span class="irow-ic">${irlIcon(e.cat)}</span>`}
+        <span class="grow"><b>${esc(e.n)}</b><small>${fmtDate(ymd(new Date(e.t0)))} · ${I.per[e.id].m} min · ${tag[e.o]}</small></span>${I.per[e.id].c ? `<em>+${I.per[e.id].c}</em>` : ''}</div>`).join('')}</div>
+      ${list.length > show.length ? `<button class="act" data-pf="all">Show all ${list.length}</button>` : ''}`
+    : '<p class="empty">Nothing yet. Next time you\'re bored, tap I\'m bored on Home: what you do lands here.</p>'}`;
+  hydrate(el);
+}
+$('pf').onclick = e => {
+  const b = e.target.closest('[data-pf]'); if (!b) return;
+  Sound.tap();
+  if (b.dataset.pf === 'all') { irlAll = true; renderIrl(); }
+  else if (b.dataset.pf === 'ph') ovOpen({ kind: 'fit', step: 'pview', proof: b.dataset.id });
+};
+
 function afterChange() { checkBoss(); checkAchievements(); renderCoins(); if ($('v-locker').classList.contains('on')) renderLocker(); }
 
 /* ------------------------------------------------------------------ nav + boot */
@@ -2914,12 +3393,13 @@ window.levelupBack = () => {
   if ($('rankup').classList.contains('open')) { nextMoment(); return true; }
   if ($('sheetbg').classList.contains('open')) { closeSheet(); return true; }
   if (!$('ov').hidden) { ovClose(); return true; }   // the Daily camera, photo or breathing screen; camera off, nothing half-saved
+  if (!$('pd').hidden) { pdBack(); return true; }   // I'M BORED: a running Phone Down only hides, it keeps counting
   if (!$('wo').hidden) { $('wo').classList.contains('res') ? claimResults() : hideWorkout(); return true; }   // never discards
   if (!$('v-home').classList.contains('on')) { document.querySelector('.nav button[data-v=home]').click(); return true; }
   return false;   // app to background; a running workout persists
 };
-function renderAll() { renderCard(); renderScreen(); renderToday(); renderBoss(); renderHabits(); renderGoals(); renderTrain(); renderDaily(); if ($('v-stats').classList.contains('on')) renderStats(); afterChange(); }
-renderBody(); renderAll(); save(); woBoot();
+function renderAll() { renderCard(); renderBored(); renderScreen(); renderToday(); renderBoss(); renderHabits(); renderGoals(); renderTrain(); renderDaily(); if ($('v-stats').classList.contains('on')) renderStats(); afterChange(); }
+renderBody(); renderAll(); save(); woBoot(); irlTicker(); irlReturn();
 setTimeout(() => { scrRefresh(true); scrPush(); renderScreen(); afterChange(); }, 0);
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
 // a new day while the app stays open (or comes back from the background): redraw so "today" moves
@@ -2929,6 +3409,7 @@ setInterval(() => { if (!rollover() && $('v-stats').classList.contains('on')) re
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && !rollover() && scrOn() && scrRefresh()) { renderScreen(); scrRepaint(); afterChange(); }
   if (!document.hidden && S.workout) { woTick(); if (S.workout && !$('wo').hidden) renderWorkout(); }
+  if (!document.hidden && S.irl.live) irlReturn();   // back from Phone Down: check it, or "Back already?"
   if (!document.hidden && woAwake) wake(true);   // the browser drops a wake lock while hidden: take it again
 });
 if ('serviceWorker' in navigator && !window.LevelUpAndroid) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
