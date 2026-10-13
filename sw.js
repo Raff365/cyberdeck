@@ -23,7 +23,8 @@ self.addEventListener('activate', e => e.waitUntil(
 
 self.addEventListener('fetch', e => {
   const req = e.request, url = new URL(req.url);
-  if (req.method !== 'GET' || url.origin !== location.origin) return;
+  // the push-up counter's pose model (vendor/, ~19 MB) loads only when used: never copied into the cache
+  if (req.method !== 'GET' || url.origin !== location.origin || url.pathname.includes('/vendor/')) return;
   const nav = req.mode === 'navigate';
   const shell = nav && /\/(index\.html)?$/.test(url.pathname);   // the app's own page, with or without index.html
   const key = shell ? INDEX : req;

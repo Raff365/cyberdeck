@@ -1,11 +1,13 @@
 package app.levelup;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.ComponentName;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
@@ -14,6 +16,7 @@ import android.os.Environment;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.webkit.JavascriptInterface;
+import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -40,10 +43,11 @@ import java.nio.charset.StandardCharsets;
 public class MainActivity extends Activity {
     private static final String HOST = "appassets.androidplatform.net";
     private static final String START = "https://" + HOST + "/assets/www/index.html";
-    private static final int PICK_FILE = 1;
+    private static final int PICK_FILE = 1, CAMERA = 2;
     private static final int GROUND = Color.rgb(0x0c, 0x0a, 0x1d);
 
-    static final String OPEN = "levelup.open";   // "workout": sent by the screen-time block screen
+    static final String OPEN = "levelup.open";   // "workout" | "pushups": sent by the screen-time block screen
+    static final String APP = "levelup.app";     // with "pushups": the app that was blocked
 
     private static final long CHECK_EVERY_MS = 15L * 60 * 1000;   // auto-check on open, at most every 15 minutes
 
@@ -55,7 +59,8 @@ public class MainActivity extends Activity {
     private Updater.Release available;        // a newer build we know about
     private boolean resumed;
     private File readyApk;                    // downloaded and checked, waiting for the app to be on screen
-    private boolean openWorkout;              // TRAIN INSTEAD was tapped; open the workout once the page is ready
+    private String openJs;                    // TRAIN INSTEAD / EMERGENCY UNLOCK was tapped: run once the page is ready
+    private PermissionRequest camAsk;         // the page's camera request, waiting for Android's permission dialog
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -76,20 +81,28 @@ public class MainActivity extends Activity {
         s.setDomStorageEnabled(true);
         s.setAllowFileAccess(false);
         s.setTextZoom(100);   // the layout is set in px; system font scaling would break it
+        s.setMediaPlaybackRequiresUserGesture(false);   // the push-up camera preview plays without a second tap
 
         web.setWebViewClient(new WebViewClient() {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                return loader.shouldInterceptRequest(request.getUrl());
+                WebResourceResponse r = loader.shouldInterceptRequest(request.getUrl());
+                // the pose model's JS module and WebAssembly need their real types (an older table may not know them)
+                String path = request.getUrl().getPath();
+                if (r != null && path != null) {
+                    if (path.endsWith(".mjs")) r.setMimeType("text/javascript");
+                    else if (path.endsWith(".wasm")) r.setMimeType("application/wasm");
+                }
+                return r;
             }
 
             @Override
             public void onPageFinished(WebView view, String url) {
                 pageReady = true;
                 if (available != null) announce(available); else maybeCheck(false);
-                if (openWorkout) {
-                    openWorkout = false;
-                    js("window.levelupOpenWorkout && window.levelupOpenWorkout()");
+                if (openJs != null) {
+                    js(openJs);
+                    openJs = null;
                 }
             }
 
@@ -122,21 +135,63 @@ public class MainActivity extends Activity {
                     return false;
                 }
             }
+
+            // the push-up counter's camera: only our own page, only video. Android asks the user the first time.
+            @Override
+            public void onPermissionRequest(PermissionRequest r) {
+                runOnUiThread(() -> {
+                    Uri o = r.getOrigin();
+                    boolean ok = o != null && HOST.equals(o.getHost()) && r.getResources().length > 0;
+                    for (String res : r.getResources()) ok &= PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(res);
+                    if (!ok) {
+                        r.deny();
+                    } else if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                        r.grant(new String[] { PermissionRequest.RESOURCE_VIDEO_CAPTURE });
+                    } else {
+                        if (camAsk != null) camAsk.deny();
+                        camAsk = r;
+                        requestPermissions(new String[] { Manifest.permission.CAMERA }, CAMERA);
+                    }
+                });
+            }
+
+            @Override
+            public void onPermissionRequestCanceled(PermissionRequest r) {
+                runOnUiThread(() -> {
+                    if (r == camAsk) camAsk = null;
+                });
+            }
         });
 
         web.addJavascriptInterface(new Bridge(), "LevelUpAndroid");
         // only a fresh start from the block screen: a task recreated after process death, or reopened from Recents,
-        // still carries the extra in its root intent and must not open the workout again
-        openWorkout = savedInstanceState == null && (getIntent().getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) == 0
-                && "workout".equals(getIntent().getStringExtra(OPEN));
+        // still carries the extra in its root intent and must not open the workout (or push-ups) again
+        if (savedInstanceState == null && (getIntent().getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) == 0) openJs = openJs(getIntent());
         web.loadUrl(START);
+    }
+
+    /** What the block screen asked for, as the JS to run, or null. */
+    private static String openJs(Intent i) {
+        String what = i.getStringExtra(OPEN), app = i.getStringExtra(APP);
+        if ("workout".equals(what)) return "window.levelupOpenWorkout && window.levelupOpenWorkout()";
+        if ("pushups".equals(what)) return "window.levelupOpenPushups && window.levelupOpenPushups(" + (app == null ? "null" : JSONObject.quote(app)) + ")";
+        return null;
     }
 
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
-        if (!"workout".equals(intent.getStringExtra(OPEN))) return;
-        if (pageReady) js("window.levelupOpenWorkout && window.levelupOpenWorkout()"); else openWorkout = true;
+        String code = openJs(intent);
+        if (code == null) return;
+        if (pageReady) js(code); else openJs = code;
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
+        if (requestCode != CAMERA || camAsk == null) return;
+        if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) camAsk.grant(new String[] { PermissionRequest.RESOURCE_VIDEO_CAPTURE });
+        else camAsk.deny();
+        camAsk = null;
     }
 
     @Override
@@ -383,6 +438,35 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public boolean openScreenTimeSettings(String which) {
             return openSettings(which);
+        }
+
+        /** After 10 push-ups on camera: 15 min unlocked, if today's rules allow it. JSON {ok, until, left, why}. */
+        @JavascriptInterface
+        public String grantPushupUnlock() {
+            return ScreenTime.unlockJson(MainActivity.this);
+        }
+
+        /** Back to the app the block screen was covering. Only one of today's limited apps; false if it can't open. */
+        @JavascriptInterface
+        public boolean openApp(String pkg) {
+            ScreenTime.Rule r = ScreenTime.rule(MainActivity.this);
+            Intent i = pkg == null || r == null || !r.apps.contains(pkg) ? null : getPackageManager().getLaunchIntentForPackage(pkg);
+            if (i == null) return false;
+            runOnUiThread(() -> {
+                try {
+                    startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                } catch (Exception ignored) {
+                }
+            });
+            return true;
+        }
+
+        /** A limited app's name, for "Back to TikTok". "" if it isn't one. */
+        @JavascriptInterface
+        public String appName(String pkg) {
+            ScreenTime.Rule r = ScreenTime.rule(MainActivity.this);
+            String n = pkg == null || r == null || !r.apps.contains(pkg) ? null : ScreenTime.label(MainActivity.this, pkg);
+            return n == null ? "" : n;
         }
     }
 

@@ -27,7 +27,7 @@ public class LimitService extends AccessibilityService {
     private final Map<String, Boolean> activities = new HashMap<>();
     private String fg;          // the app in front, as far as window changes tell
     private String blockedPkg;
-    private long blockedAt;
+    private long blockedAt, warnedUnlock;   // warnedUnlock: the unlock (its end time) that already got its 1-minute warning
 
     @Override
     protected void onServiceConnected() {
@@ -74,6 +74,16 @@ public class LimitService extends AccessibilityService {
         // incoming-call screens show) is never covered; look again in a minute
         if (ScreenTime.inCall(this) || ScreenTime.locked(this)) {
             h.postDelayed(check, MIN);
+            return;
+        }
+        // an emergency unlock (10 push-ups): nothing blocks or warns till it ends, then this looks again at once and blocks
+        long until = ScreenTime.unlockUntil(this), un = until == 0 ? 0 : until - now;
+        if (un > 0) {
+            if (un <= MIN + 1000 && warnedUnlock != until) {
+                warnedUnlock = until;
+                Toast.makeText(this, "LEVEL UP: 1 min of your unlock left", Toast.LENGTH_LONG).show();
+            }
+            h.postDelayed(check, Math.max(500, Math.min(un > MIN + 1000 ? un - MIN : un + 500, 15 * MIN)));
             return;
         }
         long used = ScreenTime.usedToday(this, r.apps, 2000);

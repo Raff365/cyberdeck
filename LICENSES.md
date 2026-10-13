@@ -28,6 +28,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## Pose detection (`vendor/mediapipe/`)
+
+MediaPipe Tasks Vision 1.1.0 (`vision_bundle.mjs`, `wasm/`) and the Pose Landmarker (lite) model
+(`pose_landmarker_lite.task`), from [MediaPipe](https://github.com/google-ai-edge/mediapipe), Copyright Google LLC,
+under the Apache License 2.0 (full text in `vendor/mediapipe/LICENSE`; also https://www.apache.org/licenses/LICENSE-2.0). Unmodified. Used only for the push-up
+counter; it runs on the phone.
+
 ## Fonts (`fonts/`)
 
 Barlow Condensed (Jeremy Tribby) and Archivo (Omnibus-Type), from Google Fonts, under the SIL Open Font License 1.1: https://openfontlicense.org

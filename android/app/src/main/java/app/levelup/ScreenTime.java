@@ -57,7 +57,9 @@ import java.util.Set;
  */
 final class ScreenTime {
     static final String PREFS = "screentime";
-    private static final String CFG = "cfg", WARNED = "warned";
+    private static final String CFG = "cfg", WARNED = "warned", UNL_UNTIL = "unlockUntil", UNL_DAY = "unlockDay", UNL_USED = "unlockUsed";
+    static final long UNLOCK_MS = 15 * 60_000L;   // an emergency unlock (10 push-ups on camera): 15 minutes, twice a day
+    private static final int UNLOCKS = 2;
     private static final long MIN = 60_000L, LOOKBACK = 6 * 60 * MIN;   // a session open at midnight began before it
     private static final int[] LIMITS = { 0, 30, 45, 60, 90, 120 };
 
@@ -285,6 +287,54 @@ final class ScreenTime {
         if (today.equals(p.getString(WARNED, ""))) return false;
         p.edit().putString(WARNED, today).apply();
         return true;
+    }
+
+    // ------------------------------------------------------------------ emergency unlock (JS counts the push-ups; the rules live here)
+
+    /** When the running unlock ends, or 0. One ending more than 16 min from now came from a clock change: ignored. */
+    static long unlockUntil(Context c) {
+        long u = prefs(c).getLong(UNL_UNTIL, 0), now = System.currentTimeMillis();
+        return u > now && u - now <= UNLOCK_MS + MIN ? u : 0;
+    }
+
+    static long unlockLeftMs(Context c) {
+        long u = unlockUntil(c);
+        return u == 0 ? 0 : Math.max(0, u - System.currentTimeMillis());
+    }
+
+    /** Unlocks left today; the count starts again at local midnight. */
+    static int unlocksLeft(Context c) {
+        SharedPreferences p = prefs(c);
+        int used = dayKey(System.currentTimeMillis()).equals(p.getString(UNL_DAY, "")) ? p.getInt(UNL_USED, 0) : 0;
+        return Math.max(0, UNLOCKS - used);
+    }
+
+    /** Today's limit is used up (the only time there is anything to unlock). Can't measure: false. */
+    static boolean overLimit(Context c) {
+        Rule r = rule(c);
+        long used = r == null ? -1 : usedToday(c, r.apps, 3000);
+        return used >= 0 && used >= r.limit * MIN;
+    }
+
+    /** null when granted (15 min from now, one of today's unlocks used), else why not: "active", "none_left", "not_over". */
+    static synchronized String grantUnlock(Context c) {
+        if (unlockLeftMs(c) > 0) return "active";
+        if (unlocksLeft(c) <= 0) return "none_left";
+        if (!overLimit(c)) return "not_over";
+        long now = System.currentTimeMillis();
+        prefs(c).edit().putLong(UNL_UNTIL, now + UNLOCK_MS).putString(UNL_DAY, dayKey(now)).putInt(UNL_USED, UNLOCKS - unlocksLeft(c) + 1).commit();
+        return null;
+    }
+
+    /** The bridge's answer: {ok, until, left, why}. */
+    static String unlockJson(Context c) {
+        String why = grantUnlock(c);
+        try {
+            JSONObject o = new JSONObject().put("ok", why == null).put("until", unlockUntil(c)).put("left", unlocksLeft(c));
+            return (why == null ? o : o.put("why", why)).toString();
+        } catch (Exception e) {
+            return "{\"ok\":false,\"why\":\"failed\"}";
+        }
     }
 
     /**
@@ -534,7 +584,7 @@ final class ScreenTime {
     static String status(Context c) {
         try {
             return new JSONObject().put("v", 1).put("sdk", Build.VERSION.SDK_INT).put("maker", Build.MANUFACTURER == null ? "" : Build.MANUFACTURER)
-                    .put("usage", hasUsageAccess(c)).put("blocker", blockerOn(c)).toString();
+                    .put("usage", hasUsageAccess(c)).put("blocker", blockerOn(c)).put("unlockUntil", unlockUntil(c)).put("unlocksLeft", unlocksLeft(c)).toString();
         } catch (Exception e) {
             return "{\"v\":1,\"usage\":false,\"blocker\":false}";
         }

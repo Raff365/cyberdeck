@@ -523,7 +523,7 @@ const closeSheet = () => {
   if (prevFocus && prevFocus.isConnected) prevFocus.focus({ preventScroll: true });
 };
 $('sheetbg').onclick = e => { if (e.target === $('sheetbg')) closeSheet(); };
-addEventListener('keydown', e => { if (e.key === 'Escape' && ($('rankup').classList.contains('open') || $('sheetbg').classList.contains('open') || !$('wo').hidden)) levelupBack(); });
+addEventListener('keydown', e => { if (e.key === 'Escape' && (!$('pu').hidden || $('rankup').classList.contains('open') || $('sheetbg').classList.contains('open') || !$('wo').hidden)) levelupBack(); });
 
 function habitSheet() {
   let pick = ALL.slice();
@@ -1587,8 +1587,10 @@ function nxLine(cur, nx) {
   if (nx.limit && !sameApps(nx.apps, cur.apps)) parts.push(`${nx.apps.length} ${nx.apps.length === 1 ? 'app' : 'apps'}`);
   return parts.length ? `<div class="scr-ft nx"><span>From tomorrow: ${parts.join(', ')}</span></div>` : '';
 }
+let scrUnlT = 0;
 function renderScreen() {
   const el = $('scr');
+  clearTimeout(scrUnlT);
   delete el.dataset.retry;
   if (!scrOn() || !scr.st) { el.hidden = true; return; }   // a browser never shows it; on the phone, wait for the first read
   el.hidden = false;
@@ -1620,6 +1622,11 @@ function renderScreen() {
     hd = used > L ? `<b>${used - L}</b><span>min over</span>${flame}` : `<b>${left}</b><span>min left</span>${flame}`;
     f = lost ? lostFt : left > 0 ? ft(`Stay under till midnight: +${pay} coins`, 1) : left === 0 ? ft(`At your limit. Stop now and you still get +${pay} coins`, 1) : ft('No screen coins today. New day at midnight.');
     aria = used > L ? `Screen time: ${used - L} minutes over. Blocker is off.` : `Screen time: ${left} minutes left of ${limName(L)}. Blocker is off.${streakSay}`;
+  } else if (left <= 0 && unlLeft()) {   // an emergency unlock is running: native blocks again when it ends
+    const m = Math.ceil(unlLeft() / 60e3), at = clockAt(+st.unlockUntil);
+    cls += ' unl'; hd = `<b>${m}</b><span>min left</span><span class="tag">Unlocked</span>`; n = notches(L, 0);
+    f = ft(`Emergency unlock · apps lock again at ${at}`);
+    aria = `Screen time: unlocked, ${m} minutes left. Your apps lock again at ${at}.`;
   } else if (left <= 0) {
     cls += ' off'; hd = `${LOCK}<b>TIME'S UP</b>`; n = notches(L, 0);
     f = used <= L && !lost ? ft(`Locked till midnight · you still bank +${pay} coins`, 1) : ft('Locked till midnight · no screen coins today');
@@ -1631,10 +1638,15 @@ function renderScreen() {
   }
   el.className = cls;
   el.innerHTML = top(`${used} / ${L} MIN`) + `<div class="scr-hd">${hd}</div>` + n + f + nxLine(cur, nx)
-    + (st.blocker ? '' : `<div class="scr-warn"><span>Blocker's off, so nothing gets locked.</span><button class="act" data-scr-fix>Turn on</button></div>`);
+    + (st.blocker ? '' : `<div class="scr-warn"><span>Blocker's off, so nothing gets locked.</span><button class="act" data-scr-fix>Turn on</button></div>`)
+    + (cls.includes('off') && puCan() === null ? `<button class="scr-unl" data-scr-unl><b>Emergency unlock · 10 push-ups</b><small>15 min on camera · ${st.unlocksLeft} left today</small></button>` : '');
   el.setAttribute('aria-label', aria);
   const fix = el.querySelector('[data-scr-fix]');
   if (fix) fix.onclick = ev => { ev.stopPropagation(); Sound.tap(); setupSheet(); };
+  const sos = el.querySelector('[data-scr-unl]');
+  if (sos) sos.onclick = ev => { ev.stopPropagation(); Sound.tap(); levelupOpenPushups(null); };
+  // the unlock's minutes count down on the card, and the card locks again the moment it ends
+  if (cls.includes('unl')) { const ms = unlLeft(); scrUnlT = setTimeout(() => (unlLeft() ? renderScreen() : levelupScreenTimeChanged()), (ms - 1) % 60e3 + 200); }
 }
 $('scr').onclick = () => {
   Sound.tap();
@@ -1908,6 +1920,265 @@ window.levelupOpenWorkout = () => {
   S.workout ? openWorkout() : pickSheet();
 };
 
+/* ------------------------------------------------------------------ emergency unlock: 10 push-ups on camera */
+// Native owns the rules (15 min, twice a day, only once today's limit is used up) and blocks again when the time
+// runs out; JS only counts reps. The pose model (MediaPipe, vendor/) runs on the phone: frames never leave it, nothing
+// is saved. Anyone can still switch the blocker off in Android Settings: this is a way out that costs effort, not a lock.
+// Rep counter, side view: UP (elbow > 150°) -> DOWN (< 95°) -> UP, only in a plank (shoulder-hip line within 35° of
+// level, wrists below shoulders), the shoulder dropping at least 0.12 x shoulder-hip, at least 0.5 s a rep, 10 inside
+// 5 minutes of the first. Pure, so it can be tested with made-up landmarks.
+const PU = { N: 10, UP: 150, DOWN: 95, PLANK: 35, DROP: 0.12, MIN_MS: 500, WIN: 5 * 60e3, VIS: 0.5, TAU: 90, LOST: 1500, OFF: 400 };
+const PU_SIDES = [[11, 13, 15, 23], [12, 14, 16, 24]];   // shoulder, elbow, wrist, hip: left, right
+// ar: the frame's width / height (landmarks are 0..1 on each axis); angles are measured in real proportions
+const puNew = (ar = 1) => ({ n: 0, phase: 'wait', ang: null, sy: null, t: null, ar, first: 0, last: -1e9, top: 0, upY: 0, downY: 0, minA: 180,
+  lost: 0, off: 0, cond: 'none', tip: null, tipAt: 0, ev: null, side: -1, done: false });
+function pushupStep(st, lm, t) {
+  const s = { ...st, ev: null };
+  if (s.done) return s;
+  if (s.n && t - s.first > PU.WIN) Object.assign(s, { n: 0, first: 0, phase: 'wait', ev: 'reset', tip: 'reset', tipAt: t });
+  // the side facing the camera: the one the model is surer of, with every joint we use clearly seen
+  let side = -1, best = PU.VIS;
+  if (lm && lm.length > 24) PU_SIDES.forEach((ix, i) => { const v = Math.min(...ix.map(j => +lm[j].visibility || 0)); if (v > best) { best = v; side = i; } });
+  if (side < 0) {   // lost: pause with the count kept; a half-done rep is forgotten after a moment
+    if (!s.lost) s.lost = t;
+    if (t - s.lost > PU.LOST) Object.assign(s, { phase: 'wait', ang: null, sy: null });
+    s.cond = lm && lm.length ? 'body' : 'none'; s.t = t; return s;
+  }
+  s.lost = 0; s.side = side;
+  const [sh, el, wr, hp] = PU_SIDES[side].map(j => lm[j]), X = p => p.x * s.ar;
+  const a1 = Math.atan2(sh.y - el.y, X(sh) - X(el)), a2 = Math.atan2(wr.y - el.y, X(wr) - X(el));
+  let raw = Math.abs(a1 - a2) * 180 / Math.PI; if (raw > 180) raw = 360 - raw;
+  // smooth with a time-based EMA, so a slow phone and a fast one behave the same
+  const k = s.ang == null || s.t == null ? 1 : 1 - Math.exp(-Math.max(0, t - s.t) / PU.TAU);
+  s.ang = s.ang == null ? raw : s.ang + k * (raw - s.ang);
+  s.sy = s.sy == null ? sh.y : s.sy + k * (sh.y - s.sy);
+  s.t = t;
+  const tx = X(hp) - X(sh), ty = hp.y - sh.y, torso = Math.hypot(tx, ty), tilt = Math.atan2(Math.abs(ty), Math.abs(tx)) * 180 / Math.PI;
+  if (!(torso > 0.04 && tilt <= PU.PLANK && wr.y > sh.y)) {   // not in a plank: standing, sitting, facing the phone
+    s.cond = 'plank';
+    if (!s.off) s.off = t;
+    if (t - s.off > PU.OFF) s.phase = 'wait';
+    return s;
+  }
+  s.off = 0; s.cond = null;
+  const a = s.ang;
+  if (s.phase === 'down') {
+    s.downY = Math.max(s.downY, s.sy);
+    if (a > PU.UP) {   // back up: a rep, if the body really went down and it wasn't a twitch
+      const deep = s.downY - s.upY >= PU.DROP * torso, slow = t - s.top >= PU.MIN_MS && t - s.last >= PU.MIN_MS;
+      if (deep && slow) { s.n++; s.last = t; if (s.n === 1) s.first = t; s.ev = 'rep'; s.tip = null; s.done = s.n >= PU.N; }
+      else { s.tip = deep ? 'fast' : 'lower'; s.tipAt = t; }
+      Object.assign(s, { phase: 'up', top: t, upY: s.sy, minA: 180 });
+    }
+  } else if (a > PU.UP) {
+    if (s.phase === 'up' && s.minA < PU.UP - 20) { s.tip = 'lower'; s.tipAt = t; }   // bent, but not far enough
+    if (s.phase === 'wait') s.upY = s.sy;
+    Object.assign(s, { phase: 'up', top: t, upY: Math.min(s.upY, s.sy), minA: 180 });
+  } else if (s.phase === 'up') {
+    s.minA = Math.min(s.minA, a);
+    if (a < PU.DOWN) { s.phase = 'down'; s.downY = s.sy; }
+  }
+  return s;
+}
+
+const PU_TIPS = {
+  none: "Can't see you. Get your whole body in the picture, side-on",
+  body: 'Get your whole body in the picture, side-on',
+  plank: 'Get in push-up position, side-on to the phone',
+  lower: 'Go lower', fast: 'Slow down. All the way down, then up', reset: 'Over 5 minutes, so the count restarted',
+};
+const PU_BONES = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [24, 26], [26, 28]];
+const PU_FIG = `<svg class="pu-fig" viewBox="0 0 320 112" aria-hidden="true"><path d="M8 100h304" stroke="var(--rule-hi)" stroke-width="2"/>
+  <rect x="14" y="74" width="20" height="26" rx="3" fill="var(--panel-hi)" stroke="var(--rule-hi)" stroke-width="2"/>
+  <rect x="34" y="52" width="13" height="48" rx="3" transform="rotate(14 40 100)" fill="var(--ground)" stroke="var(--chalk)" stroke-width="2.4"/><circle cx="47" cy="61" r="2.2" fill="#ffb020"/>
+  <path d="M74 34h76" stroke="var(--dim)" stroke-width="2" stroke-dasharray="5 5"/><path d="M144 28l8 6-8 6" fill="none" stroke="var(--dim)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="183" cy="50" r="9" fill="var(--chalk)"/><path d="M196 58L300 92" stroke="var(--chalk)" stroke-width="9" stroke-linecap="round"/>
+  <path d="M199 60l-3 39" stroke="#ffb020" stroke-width="7" stroke-linecap="round"/><path d="M188 99h16" stroke="#ffb020" stroke-width="5" stroke-linecap="round"/></svg>`;
+const X_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>';
+const puBridge = () => scrOn() && typeof LevelUpAndroid.grantPushupUnlock === 'function';
+const clockAt = t => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(/\s/g, '\u00a0');   // never "10:50 / PM"
+const unlLeft = () => { const u = scr.st && +scr.st.unlockUntil; return u > Date.now() ? u - Date.now() : 0; };
+// null when an unlock can be had right now, else why not. Native checks again and has the last word.
+function puCan() {
+  if (!puBridge()) return 'demo';
+  const st = scr.st || {}, cur = scrAt(today());
+  if (unlLeft()) return 'active';
+  if (!(st.unlocksLeft > 0)) return 'none_left';
+  if (!st.blocker || !scrLim(cur) || !scr.now || scrUsed() < cur.limit) return 'not_over';
+  return null;
+}
+const PU_WHY = {
+  active: () => `You're unlocked: ${Math.ceil(unlLeft() / 60e3)} min left.`, none_left: () => 'No unlocks left today. You get 2 again at midnight.',
+  not_over: () => "You're not over your limit, so there's nothing to unlock.", failed: () => "Couldn't unlock. Try again.",
+};
+
+let pu = null, puRun = 0, puTs = 0, puModel = null;   // pu: the open screen (never saved); puRun: bumps to cancel a running camera
+function puLoad() {   // the pose model, loaded once and kept; a failed load can be tried again
+  if (!puModel) puModel = import('./vendor/mediapipe/vision_bundle.mjs').then(({ PoseLandmarker }) => {
+    const base = 'vendor/mediapipe';
+    return PoseLandmarker.createFromOptions({ wasmLoaderPath: base + '/wasm/vision_wasm_internal.js', wasmBinaryPath: base + '/wasm/vision_wasm_internal.wasm' },
+      { baseOptions: { modelAssetPath: base + '/pose_landmarker_lite.task', delegate: 'CPU' }, runningMode: 'VIDEO', numPoses: 1 });
+  }).catch(e => { puModel = null; throw e; });
+  return puModel;
+}
+// native: EMERGENCY UNLOCK on the block screen (pkg: the app it covered). Home's card calls it too.
+window.levelupOpenPushups = pkg => {
+  if (scrOn()) scrRefresh(true);
+  let name = '';
+  try { if (pkg && puBridge() && typeof LevelUpAndroid.appName === 'function') name = String(LevelUpAndroid.appName(pkg) || ''); } catch (e) {}
+  $('rankup').classList.remove('open'); closeSheet();
+  if (pu) puStop();
+  pu = { pkg: name ? pkg : null, name, step: 'setup', st: null, res: null, err: null, stream: null, frames: 0, poses: 0, ready: false };
+  $('pu').hidden = false; puRender();
+};
+function puStop() {   // camera off. The count stays (a paused screen can go on)
+  puRun++;
+  if (pu && pu.stream) { pu.stream.getTracks().forEach(t => t.stop()); pu.stream = null; }
+  const v = $('puVid'); if (v) { try { v.pause(); } catch (e) {} v.srcObject = null; }
+  wake(woAwake);   // a running workout may still want the screen on
+}
+function puClose() {
+  if (!pu) return;
+  const got = pu.res && pu.res.ok; puStop(); pu = null; $('pu').hidden = true; $('puIn').innerHTML = '';
+  if (got) levelupScreenTimeChanged(); else renderScreen();
+}
+async function puStart() {
+  const id = ++puRun, keep = pu.st;
+  Object.assign(pu, { step: 'live', ready: false, err: null }); puRender();
+  const model = puLoad(); model.catch(() => {});   // loads while Android asks for the camera
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw Object.assign(new Error('no camera API'), { name: 'NotFoundError' });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+    if (id !== puRun) { stream.getTracks().forEach(t => t.stop()); return; }
+    pu.stream = stream;
+    const v = $('puVid'); v.srcObject = stream; await v.play();
+    if (id !== puRun) return;
+    wake(true);
+    let pl; try { pl = await model; } catch (e) { e.name = 'model'; throw e; }
+    if (id !== puRun) return;
+    pu.pl = pl; pu.st = keep && keep.ar === v.videoWidth / v.videoHeight ? keep : Object.assign(puNew(v.videoWidth / v.videoHeight), keep ? { n: keep.n, first: keep.first } : {});
+    pu.ready = true; puLive(); puLoop(id);
+  } catch (e) {
+    if (id !== puRun) return;
+    puStop();
+    const n = e && e.name;
+    pu.err = n === 'model' ? 'model' : n === 'NotAllowedError' || n === 'SecurityError' || n === 'PermissionDeniedError' ? 'denied' : n === 'NotReadableError' || n === 'AbortError' || n === 'TrackStartError' ? 'busy' : 'nocam';
+    pu.step = 'err'; puRender(); Sound.nope();
+  }
+}
+function puLoop(id) {
+  const v = $('puVid'), next = f => (v.requestVideoFrameCallback ? v.requestVideoFrameCallback(f) : requestAnimationFrame(f));
+  const frame = () => {
+    if (id !== puRun || !pu || pu.step !== 'live') return;
+    if (v.readyState >= 2) {
+      puTs = Math.max(performance.now(), puTs + 1);   // the model wants strictly increasing timestamps
+      let lm = null;
+      try { const r = pu.pl.detectForVideo(v, puTs); lm = r && r.landmarks && r.landmarks[0] || null; } catch (e) {}
+      pu.st = pushupStep(pu.st, lm, puTs); pu.frames++; if (lm) pu.poses++;
+      puDraw(lm, pu.st); puLive();
+      if (pu.st.ev === 'rep') { Sound.combo(pu.st.n); buzz(pu.st.done ? [40, 60, 40] : 35); }
+      if (pu.st.done) { puDone(); return; }
+    }
+    next(frame);
+  };
+  next(frame);
+}
+function puDraw(lm, st) {
+  const c = $('puCv'), v = $('puVid'); if (!c || !v.videoWidth) return;
+  if (c.width !== v.videoWidth || c.height !== v.videoHeight) { c.width = v.videoWidth; c.height = v.videoHeight; }
+  const g = c.getContext('2d'), W = c.width, H = c.height, ok = j => lm[j] && (+lm[j].visibility || 0) > 0.3;
+  g.clearRect(0, 0, W, H);
+  if (!lm) return;
+  const used = st.side >= 0 && !st.cond ? PU_SIDES[st.side] : [];
+  g.lineCap = 'round';
+  for (const [a, b] of PU_BONES) {
+    if (!ok(a) || !ok(b)) continue;
+    const hot = used.includes(a) && used.includes(b);
+    g.strokeStyle = hot ? '#ffb020' : 'rgba(241,238,249,.7)'; g.lineWidth = Math.max(2, W / (hot ? 90 : 160));
+    g.beginPath(); g.moveTo(lm[a].x * W, lm[a].y * H); g.lineTo(lm[b].x * W, lm[b].y * H); g.stroke();
+  }
+  for (let j = 11; j <= 28; j++) {
+    if (!ok(j)) continue;
+    g.fillStyle = used.includes(j) ? '#ffd23f' : '#f1eef9';
+    g.beginPath(); g.arc(lm[j].x * W, lm[j].y * H, Math.max(3, W / 110), 0, 7); g.fill();
+  }
+}
+// the live screen's numbers, written in place (the video element must never be rebuilt)
+function puLive() {
+  const el = $('puIn'), st = pu.st, set = (sel, v) => { const e = el.querySelector(sel); if (e && e.textContent !== v) e.textContent = v; };
+  if (!st || !pu.ready) return;
+  const now = performance.now(), tip = st.cond ? PU_TIPS[st.cond] : st.tip && now - st.tipAt < 2500 ? PU_TIPS[st.tip]
+    : st.phase === 'wait' ? 'Arms straight to start' : st.phase === 'down' ? 'Push up!' : st.n ? 'Nice. Keep going' : 'Go down till your arms bend';
+  set('#puN', String(st.n)); set('#puTip', tip);
+  const left = st.n ? Math.max(0, PU.WIN - (now - st.first)) : 0;
+  set('#puClock', st.n ? `${Math.floor(left / 60e3)}:${String(Math.floor(left / 1000) % 60).padStart(2, '0')} left` : '5 min to do 10');
+  const stg = el.querySelector('.pu-stage'); stg.dataset.load = '0'; stg.classList.toggle('warn', !!st.cond);
+  const say = $('puSay'); if (st.ev === 'rep' && say) say.textContent = `${st.n} of ${PU.N}`;
+}
+function puDone() {
+  puStop();
+  pu.step = 'done';
+  if (puBridge()) {
+    pu.res = scrCall('grantPushupUnlock') || { ok: false, why: 'failed' };
+    if (scrOn()) { scrRefresh(true); renderScreen(); }
+  }
+  pu.res && pu.res.ok || !puBridge() ? Sound.clear() : Sound.nope();
+  puRender();
+}
+function puBackToApp() {
+  let ok = false;
+  try { ok = LevelUpAndroid.openApp(pu.pkg) === true; } catch (e) {}
+  if (ok) puClose(); else { Sound.nope(); showNote(`Couldn't open ${pu.name}`, 'Open it from your home screen.', HOURGLASS, 'Screen time'); }
+}
+function puRender() {
+  const el = $('puIn'), can = puCan(), demo = can === 'demo', left = scr.st && scr.st.unlocksLeft, p = pu;
+  const top = (mid = '') => `<div class="pu-top"><button class="pu-x" data-pu="close" aria-label="Close">${X_ICON}</button><div class="mid">${mid}</div><span></span></div>`;
+  const fine = '<p class="pu-fine">The camera only counts reps. Frames never leave your phone and nothing is saved.</p>';
+  let h;
+  if (p.step === 'setup') {
+    const why = can && !demo ? PU_WHY[can]() : '';
+    h = top() + `<div class="pu-body"><div class="wo-kick">${demo ? 'Push-up counter' : 'Emergency unlock'}</div><h2 class="pu-hd">10 push-ups</h2>
+      <p class="pu-sub">${demo ? 'Practice mode. Nothing gets unlocked here.' : why ? esc(why) : `= 15 more minutes on your apps.<span class="pu-left">${left} ${left === 1 ? 'unlock' : 'unlocks'} left today</span>`}</p>
+      ${p.st && p.st.n && !why ? `<p class="pu-sub keep">Paused at ${p.st.n} of ${PU.N}. Your count is kept.</p>` : ''}
+      ${PU_FIG}<ol class="pu-how"><li>Lean your phone on something, about 2 big steps away.</li><li>Side-on. Whole body in the picture.</li><li>All the way down, then all the way up.</li></ol></div>
+      <div class="pu-act">${fine}${why ? (can === 'active' && p.pkg ? `<button class="go" data-pu="app">Back to ${esc(p.name)}</button>` : '') + '<button class="ghost" data-pu="close">Close</button>'
+        : `<button class="go" data-pu="start">${p.st && p.st.n ? 'Resume camera' : 'Start camera'}</button>`}</div>`;
+  } else if (p.step === 'live') {
+    h = top('<b>10 push-ups</b><span id="puClock">5 min to do 10</span>') + `<div class="pu-stage" data-load="${p.ready ? 0 : 1}"><video id="puVid" playsinline muted></video><canvas id="puCv"></canvas>
+      <div class="pu-count" aria-hidden="true"><b id="puN">${p.st ? p.st.n : 0}</b><span>/ ${PU.N}</span></div>
+      <div class="pu-load"><i></i>Loading the rep counter...</div></div>
+      <p class="pu-tip" id="puTip" aria-live="polite">Starting the camera...</p><p class="sr" id="puSay" aria-live="assertive"></p>
+      <div class="pu-act">${fine}<button class="ghost" data-pu="close">Cancel</button></div>`;
+  } else if (p.step === 'err') {
+    const E = {
+      denied: ["Camera's off", 'LEVEL UP needs the camera to count your push-ups. Allow it in App info > Permissions > Camera, then try again.'],
+      busy: ['Camera busy', 'Another app is using the camera. Close it and try again.'],
+      nocam: ['No camera', "Couldn't start the camera on this phone."],
+      model: ["Counter didn't load", "The rep counter couldn't start. Try again."],
+    }[p.err];
+    h = top() + `<div class="pu-body"><div class="wo-kick">${demo ? 'Push-up counter' : 'Emergency unlock'}</div><h2 class="pu-hd sm">${E[0]}</h2><p class="pu-sub">${E[1]}</p></div>
+      <div class="pu-act">${p.err === 'denied' && scrOn() ? '<button class="go" data-pu="settings">Open settings</button>' : ''}${p.err === 'nocam' ? '' : `<button class="${p.err === 'denied' && scrOn() ? 'ghost' : 'go'}" data-pu="start">Try again</button>`}<button class="ghost" data-pu="close">Close</button></div>`;
+  } else {   // done
+    const r = p.res, ok = r && r.ok;
+    const sub = demo ? 'Nice set. Practice mode, so nothing got unlocked.' : ok ? `Your apps lock again at ${clockAt(r.until)}.<br>${r.left} ${r.left === 1 ? 'unlock' : 'unlocks'} left today.`
+      : esc((PU_WHY[r && r.why] || PU_WHY.failed)());
+    h = top() + `<div class="pu-body pu-win"><div class="wo-kick">10 of 10</div><h2 class="res-hd${demo || ok ? '' : ' short'}">${ok ? 'Unlocked' : demo ? 'Set done' : 'Not unlocked'}</h2>
+      ${ok ? '<div class="pu-big">15<small>min</small></div>' : ''}<p class="res-sub">${sub}</p></div>
+      <div class="pu-act">${ok && p.pkg ? `<button class="go" data-pu="app">Back to ${esc(p.name)}</button><button class="ghost" data-pu="close">Stay here</button>` : '<button class="go" data-pu="close">Done</button>'}</div>`;
+  }
+  $('pu').classList.toggle('live', p.step === 'live');
+  el.innerHTML = h;
+  el.querySelectorAll('[data-pu]').forEach(b => b.onclick = () => {
+    const a = b.dataset.pu; Sound.tap();
+    if (a === 'close') puClose(); else if (a === 'start') puStart(); else if (a === 'app') puBackToApp();
+    else if (a === 'settings') { let ok = false; try { ok = LevelUpAndroid.openScreenTimeSettings('appinfo') === true; } catch (e) {} if (!ok) showNote("Couldn't open Settings", 'Open Settings > Apps > LEVEL UP > Permissions', HOURGLASS, 'Camera'); }
+  });
+  if (p.step !== 'live') el.focus({ preventScroll: true });   // the dialog itself, for screen readers; no ring on a button
+}
+document.addEventListener('visibilitychange', () => {   // the camera never runs in the background: pause, keep the count
+  if (document.hidden && pu && pu.step === 'live') { puStop(); pu.step = 'setup'; puRender(); }
+});
+
 function afterChange() { checkBoss(); checkAchievements(); renderCoins(); if ($('v-locker').classList.contains('on')) renderLocker(); }
 
 /* ------------------------------------------------------------------ nav + boot */
@@ -1920,6 +2191,7 @@ document.querySelectorAll('.nav button').forEach(b => b.onclick = () => {
 });
 // Android back button: returns true when it handled the press (so the app stays open)
 window.levelupBack = () => {
+  if (!$('pu').hidden) { puClose(); return true; }   // the push-up screen sits on top of everything, camera off
   if ($('rankup').classList.contains('open')) { nextMoment(); return true; }
   if ($('sheetbg').classList.contains('open')) { closeSheet(); return true; }
   if (!$('wo').hidden) { $('wo').classList.contains('res') ? claimResults() : hideWorkout(); return true; }   // never discards

@@ -12,6 +12,11 @@
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
 
+    <!-- emergency unlock: the front camera counts push-ups on the phone (frames never leave it, nothing is saved).
+         Asked for the first time it is used; phones without a camera can still install the app. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+
     <!-- see launchable apps (the picker) and home apps (never limited), without QUERY_ALL_PACKAGES -->
     <queries>
         <intent>

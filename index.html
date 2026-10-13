@@ -620,6 +620,56 @@ html:has(.wo:not([hidden])) { overflow: hidden; }
 .scr.setup b { display: block; font: italic 800 clamp(21px, 6.4vw, 25px)/1 var(--display); text-transform: uppercase; letter-spacing: .01em; white-space: nowrap; }
 .scr.setup small { display: block; font-size: 12.5px; color: var(--dim); margin-top: 5px; }
 .scr.setup .chev { width: 22px; height: 22px; flex: none; color: var(--dim); }
+/* emergency unlock on the card (over the limit, unlocks left) and while one runs */
+.scr-unl { display: grid; gap: 4px; justify-items: center; width: 100%; min-height: 56px; margin-top: 12px; padding: 9px 10px; border-radius: 12px; border: 1.5px solid #ffb02099; background: #ffb02012; text-align: center; }
+.scr-unl b { font: 800 clamp(16px, 5vw, 19px)/1 var(--display); letter-spacing: .04em; text-transform: uppercase; color: #ffd23f; }
+.scr-unl small { font-size: 12px; color: var(--dim); }
+.scr.unl { border-color: #ffb02099; }
+.scr.unl .tag { margin-left: auto; align-self: center; font: 700 12px/1 var(--text); font-style: normal; letter-spacing: .14em; text-transform: uppercase; color: #ffd23f; padding: 6px 8px; border-radius: 8px; border: 1px solid #ffb02099; }
+
+/* push-up screen: full screen over everything but toasts; the camera view takes what's left */
+html:has(.pu:not([hidden])) { overflow: hidden; }
+.pu { position: fixed; inset: 0; z-index: 45; overflow-y: auto; overscroll-behavior: contain; background: radial-gradient(90% 38% at 50% 0%, #ffb0201f, transparent 70%), var(--ground); }
+.pu-in { max-width: 520px; min-height: 100%; margin: 0 auto; padding: calc(var(--safe-t) + 4px) 16px calc(var(--safe-b) + 14px); display: flex; flex-direction: column; }
+.pu.live .pu-in { height: 100%; }
+.pu-in:focus { outline: none; }
+.pu-top { display: grid; grid-template-columns: 48px 1fr 48px; align-items: center; min-height: 52px; }
+.pu-x { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 12px; color: var(--dim); margin-left: -8px; }
+.pu-x svg { width: 24px; height: 24px; }
+.pu-top .mid { text-align: center; min-width: 0; }
+.pu-top .mid b { display: block; font: italic 800 17px/1 var(--display); text-transform: uppercase; letter-spacing: .04em; }
+.pu-top .mid span { display: block; font: 700 14px/1 var(--display); color: var(--dim); margin-top: 3px; font-variant-numeric: tabular-nums; letter-spacing: .04em; }
+.pu-body { padding-top: 6px; }
+.pu-hd { font: italic 800 56px/.92 var(--display); text-transform: uppercase; letter-spacing: -.01em; margin: 8px 0 8px; }
+.pu-hd.sm { font-size: 44px; }
+.pu-sub { font-size: 14px; line-height: 1.45; color: var(--chalk); max-width: 36ch; }
+.pu-sub.keep { color: #ffd23f; margin-top: 6px; }
+.pu-left { display: table; margin-top: 8px; padding: 5px 9px; border-radius: 99px; border: 1px solid #ffb02099; background: #ffb02014; font: 700 14px/1 var(--display); letter-spacing: .08em; text-transform: uppercase; color: #ffd23f; }
+.pu-fig { display: block; width: 100%; max-width: 360px; height: auto; margin: 18px 0 6px; }
+.pu-how { list-style: none; counter-reset: s; display: grid; gap: 10px; margin-top: 8px; }
+.pu-how li { counter-increment: s; display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: baseline; font-size: 15px; line-height: 1.35; }
+.pu-how li::before { content: counter(s); width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; align-self: start; font: italic 800 16px/1 var(--display); border: 1.5px solid var(--rule-hi); color: #ffd23f; }
+.pu-act { margin-top: auto; padding-top: 16px; }
+.pu .go { background: #ffb020; box-shadow: 0 10px 26px -10px #ffb020; height: 64px; font-size: 24px; margin-top: 12px; }
+.pu-fine { font-size: 12px; line-height: 1.4; color: var(--faint); text-align: center; }
+.pu-stage { position: relative; flex: 1 1 auto; min-height: 200px; margin-top: 4px; border-radius: 18px; overflow: hidden; background: #000; border: 1.5px solid var(--rule-hi); }
+.pu-stage.warn { border-color: #ff7a8a; }
+.pu-stage video, .pu-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; transform: scaleX(-1); }
+.pu-count { position: absolute; left: 12px; top: 6px; display: flex; align-items: baseline; gap: 6px; text-shadow: 0 2px 10px #000, 0 0 2px #000; }
+.pu-count b { font: italic 800 112px/.9 var(--display); color: #ffd23f; font-variant-numeric: tabular-nums; }
+.pu-count span { font: italic 800 34px/1 var(--display); color: var(--chalk); }
+.pu-load { position: absolute; inset: 0; display: none; place-content: center; justify-items: center; gap: 14px; background: rgba(12,10,29,.72); font: 700 18px/1.2 var(--display); letter-spacing: .04em; text-transform: uppercase; color: var(--chalk); text-align: center; padding: 16px; }
+.pu-load i { width: 36px; height: 36px; border-radius: 50%; border: 4px solid var(--rule-hi); border-top-color: #ffb020; animation: spin .8s linear infinite; }
+.pu-stage[data-load="1"] .pu-load { display: grid; }
+.pu-stage[data-load="1"] .pu-count { visibility: hidden; }
+.pu-tip { min-height: 2.3em; margin-top: 10px; font: 800 22px/1.05 var(--display); text-transform: uppercase; letter-spacing: .02em; text-align: center; }
+.pu.live .pu-act { padding-top: 6px; }
+.pu.live .ghost { height: 52px; margin-top: 8px; }
+.pu-win { text-align: center; margin-top: auto; }
+.pu-win .res-hd { font-size: 64px; }
+.pu-big { font: italic 800 120px/.9 var(--display); color: var(--chalk); margin-top: 6px; font-variant-numeric: tabular-nums; }
+.pu-big small { font-size: 36px; margin-left: 6px; text-transform: uppercase; }
+@media (max-height: 640px) { .pu-fig { display: none; } .pu-hd { font-size: 46px; } .pu-count b { font-size: 84px; } }
 
 /* setup sheet */
 .stp { display: grid; grid-template-columns: 34px minmax(0, 1fr); column-gap: 12px; padding: 14px 0 12px; border-top: 1px solid var(--rule); }
@@ -800,7 +850,7 @@ html:has(.wo:not([hidden])) { overflow: hidden; }
 
     <div class="foot"><button class="act" id="scrOpen" hidden>Screen time</button><button class="act" id="soundToggle"></button><button class="act" id="checkUpdate" hidden>Check for updates</button><button class="act" id="export">Export backup</button><button class="act" id="import">Import</button><button class="act danger" id="erase">Erase all</button>
       <input type="file" id="importFile" accept="application/json,.json" hidden></div>
-    <p class="credit"><span id="appVersion"></span> Body map art: react-native-body-highlighter (MIT).</p>
+    <p class="credit"><span id="appVersion"></span> Body map art: react-native-body-highlighter (MIT). Push-up counter: MediaPipe (Apache 2.0).</p>
   </main>
 </div>
 
@@ -813,6 +863,7 @@ html:has(.wo:not([hidden])) { overflow: hidden; }
 
 <section class="wo" id="wo" hidden role="dialog" aria-modal="true" aria-label="Workout"><div class="wo-in" id="woIn"></div></section>
 <p class="sr" id="woSay" aria-live="polite"></p>
+<section class="pu" id="pu" hidden role="dialog" aria-modal="true" aria-label="Emergency unlock"><div class="pu-in" id="puIn" tabindex="-1"></div></section>
 <button class="wopill" id="woPill" hidden aria-label="Workout running. Open workout."></button>
 
 <div class="sheet-bg" id="sheetbg"><div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle"></div></div>

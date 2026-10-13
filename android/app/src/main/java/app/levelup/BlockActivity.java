@@ -59,7 +59,7 @@ public class BlockActivity extends Activity {
         shownAt = System.currentTimeMillis();   // it came up (whether or not it stays)
         // still over the limit on a still-limited app, and no call going on? otherwise there is nothing to block: go
         rule = ScreenTime.rule(this);
-        long used = rule == null || pkg == null || !rule.apps.contains(pkg) || ScreenTime.isProtected(this, pkg) || ScreenTime.inCall(this) ? -1
+        long used = ScreenTime.unlockLeftMs(this) > 0 || rule == null || pkg == null || !rule.apps.contains(pkg) || ScreenTime.isProtected(this, pkg) || ScreenTime.inCall(this) ? -1
                 : ScreenTime.usedToday(this, rule.apps, 5000);
         if (used < 0 || used < rule.limit * 60_000L) {
             finish();
@@ -131,6 +131,29 @@ public class BlockActivity extends Activity {
         TextView cap = text("Opens a workout in LEVEL UP · no gym needed", 13, DIM);
         cap.setGravity(Gravity.CENTER_HORIZONTAL);
         col.addView(cap, margins(8, 0));
+
+        // 10 push-ups on camera in LEVEL UP buy 15 minutes, twice a day (ScreenTime keeps count; the app only counts reps)
+        int unl = ScreenTime.unlocksLeft(this);
+        Button sos = button("EMERGENCY UNLOCK", 18, unl > 0 ? GOLD : FAINT, Typeface.create("sans-serif-condensed", Typeface.BOLD),
+                shape(Color.TRANSPARENT, dp(14), unl > 0 ? GOLD : RULE, dp(2)));
+        sos.setLetterSpacing(0.08f);
+        sos.setEnabled(unl > 0);
+        sos.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setClass(this, MainActivity.class)
+                        .putExtra(MainActivity.OPEN, "pushups").putExtra(MainActivity.APP, pkg)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+            } catch (Exception ignored) {
+            }
+            finish();
+        });
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(56));
+        sp.topMargin = dp(14);
+        col.addView(sos, sp);
+
+        TextView cap2 = text(unl > 0 ? "10 push-ups on camera = 15 min · " + unl + " left today" : "No unlocks left today · resets at midnight", 13, DIM);
+        cap2.setGravity(Gravity.CENTER_HORIZONTAL);
+        col.addView(cap2, margins(8, 0));
 
         Button home = button("HOME SCREEN", 18, CHALK, Typeface.create("sans-serif-condensed", Typeface.BOLD), shape(Color.TRANSPARENT, dp(14), RULE_HI, dp(2)));
         home.setLetterSpacing(0.08f);
