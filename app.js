@@ -295,7 +295,7 @@ function renderCard() {
     $(id).style.strokeDasharray = `${placing ? 0 : (r.into * 100).toFixed(1)} 100`;
     $(id).style.opacity = placing || r.into < 0.005 ? 0 : '';   // a zero-length round cap would draw a stray dot
   }
-  $('ranknext').textContent = placing ? 'Check off a habit to start placement' : r.next ? `${Math.max(0.1, r.need).toFixed(1)} OVR to ${r.next}` : 'Top rank';
+  $('ranknext').textContent = placing ? 'Tick a quest to start placement' : r.next ? `${Math.max(0.1, r.need).toFixed(1)} OVR to ${r.next}` : 'Top rank';
   $('crest').src = CRESTS[r.tier]; $('crest').alt = placing ? 'Unranked' : `${TIERS[r.tier][0]} crest`;
   $('who').innerHTML = `<i>${esc((S.user || '?').trim().charAt(0).toUpperCase())}</i>${esc(S.user)}`; $('who').setAttribute('aria-label', `${S.user}, edit name`);
   const ds = dayStreak();
@@ -357,6 +357,7 @@ function renderHabits() {
   const k = today(), now = new Date(), list = S.habits.filter(h => due(h, now));
   const doneN = list.filter(h => h.log[k]).length, clear = list.length > 0 && doneN === list.length;
   $('todaycount').textContent = list.length ? `${doneN}/${list.length}` : '';
+  paintHello(list.length, doneN);
   $('questtitle').textContent = clear ? 'All quests cleared' : 'Daily quests';
   $('questtitle').classList.toggle('clear', clear);
   $('questbar').classList.toggle('clear', clear);
@@ -380,7 +381,7 @@ function renderHabits() {
   el.classList.toggle('editing', editing);
   el.innerHTML = S.habits.length
     ? list.map(h => row(h, true)).join('') + off.map(h => row(h, false)).join('')
-    : '<p class="empty">No habits yet. Add the first thing you want to do every day.</p>';
+    : '<p class="empty">No quests yet. Add one small thing you\'ll do every day.</p>';
   el.querySelectorAll('.habit').forEach(r => {
     const toggle = () => {
       if (editing) return;
@@ -399,6 +400,7 @@ function renderHabits() {
       const row = $('habits').querySelector(`[data-h="${h.id}"]`);
       if (row) {
         row.focus({ preventScroll: true });
+        if (adding) row.classList.add('just');
         if (adding && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
           const box = row.querySelector('.box');
           for (let i = 0; i < 8; i++) {
@@ -429,6 +431,14 @@ function renderHabits() {
   $('editHabits').textContent = editing ? 'Done' : 'Edit';
 }
 $('editHabits').onclick = () => { editing = !editing; renderHabits(); };
+// one line over the card: hello by time of day, then what's left today
+function paintHello(due, done) {
+  const h = new Date().getHours(), hi = h < 5 ? 'Up late' : h < 12 ? 'Morning' : h < 18 ? 'Afternoon' : 'Evening', left = due - done, el = $('hello');
+  const say = !S.habits.length ? 'Add a quest to get going.' : !due ? 'No quests today. Rest up.' : !left ? 'Every quest cleared. Legend.'
+    : !checkins() ? "Let's get you ranked." : `${left} ${left === 1 ? 'quest' : 'quests'} to go today.`;
+  el.classList.toggle('clear', due > 0 && !left);
+  el.innerHTML = `<b>${hi}, ${esc((S.user || 'player').trim())}</b><span>${say}</span>`;
+}
 
 function renderGoals() {
   const el = $('goals');
@@ -439,7 +449,7 @@ function renderGoals() {
       <div><div class="nm">${esc(g.name)}</div><div class="d">${when}</div></div>
       <div class="pc">${g.pct}%</div>
       <div class="bar"><i style="width:${g.pct}%"></i></div></div>`;
-  }).join('') : '<p class="empty">No goals yet.</p>';
+  }).join('') : '<p class="empty">No goals yet. Pick something big: a 5K, a pull-up, a grade.</p>';
   el.querySelectorAll('[data-g]').forEach(r => { r.onclick = () => goalSheet(S.goals.find(g => g.id === r.dataset.g)); r.onkeydown = e => { if (e.key === 'Enter') r.click(); }; });
 }
 
@@ -517,7 +527,7 @@ $('quitReset').onclick = () => {
   S.quit.best = Math.max(S.quit.best || 0, Date.now() - S.quit.since); S.quit.since = Date.now(); save(); renderQuit();
 };
 $('quitEdit').onclick = () => quitSheet();
-const paintSound = () => { $('soundToggle').textContent = `Sound: ${S.sound === false ? 'Off' : 'On'}`; };
+const paintSound = () => { const on = S.sound !== false; $('soundToggle').innerHTML = `Sound<span class="val${on ? ' on' : ''}">${on ? 'On' : 'Off'}</span>`; $('soundToggle').setAttribute('aria-pressed', on); };
 $('soundToggle').onclick = () => { S.sound = S.sound === false; save(); paintSound(); Sound.tap(); };
 paintSound();
 $('export').onclick = () => {
@@ -568,11 +578,11 @@ addEventListener('keydown', e => { if (e.key === 'Escape' && (!$('pu').hidden ||
 
 function habitSheet() {
   let pick = ALL.slice();
-  openSheet(`<h2>New habit</h2>
+  openSheet(`<h2>New quest</h2>
     <label class="field"><span class="label">Name</span><input id="hName" maxlength="40" placeholder="Drink 2L water" autocomplete="off"></label>
     <label class="field"><span class="label">Attribute</span><select id="hCat">${CATS.map(([c, a]) => `<option value="${c}">${c} (${a})</option>`).join('')}</select></label>
     <div class="field"><span class="label">Days</span><div class="days" id="hDays"></div></div>
-    <button class="go" id="hSave" disabled>Add habit</button>`, el => {
+    <button class="go" id="hSave" disabled>Add quest</button>`, el => {
     const paint = () => {
       el.querySelector('#hDays').innerHTML = DAY.map((d, i) => `<button type="button" data-d="${i}" class="${pick.includes(i) ? 'on' : ''}" aria-pressed="${pick.includes(i)}" aria-label="${DAY_NAME[i]}">${d}</button>`).join('');
       el.querySelectorAll('#hDays button').forEach(b => b.onclick = () => { const i = +b.dataset.d; pick = pick.includes(i) ? pick.filter(x => x !== i) : [...pick, i].sort(); paint(); valid(); });
@@ -839,7 +849,9 @@ function renderLocker() {
   }).join('');
   const shown = ACH.filter(a => ((!a.android || scrOn()) && (!a.only || a.only())) || S.ach[a.id]), got = shown.filter(a => S.ach[a.id]).length;
   $('trophyCount').textContent = `${got}/${shown.length}`;
-  $('walletHow').textContent = `Earn coins: 10 per quest, 50 for clearing your day, up to 50 per workout, 250 per boss, ${scrOn() || scrLedger().coins > 0 ? 'up to 60 per day under your screen limit, ' : ''}10-15 per Daily check-in (+${CHECKIN_PAY} for ${CHECKIN_N}), plus trophies.`;
+  const earn = [['+10', 'per quest'], ['+50', 'clear your day'], ['50', 'max per workout'], ['+250', 'beat the boss'],
+    ...(scrOn() || scrLedger().coins > 0 ? [['60', 'max a day under your screen limit']] : []), ['10+', 'per Daily check-in'], [`+${CHECKIN_PAY}`, `${CHECKIN_N} check-ins a day`], ['25+', 'per trophy']];
+  $('walletHow').innerHTML = `<span class="label">How to earn</span>` + earn.map(([v, t]) => `<span><b>${v}</b>${t}</span>`).join('');
   $('trophies').innerHTML = shown.map(a => `<div class="trophy${S.ach[a.id] ? '' : ' locked'}"><div class="medal">${TROPHY}</div><b>${esc(a.name)}</b><small>${esc(a.desc)}<br>+${a.coins} coins</small></div>`).join('');
   $('skins').querySelectorAll('[data-skin]').forEach(b => b.onclick = () => shop('skins', 'skin', b.dataset.skin, +b.dataset.price, b));
   $('titles').querySelectorAll('[data-title]').forEach(b => b.onclick = () => shop('titles', 'title', b.dataset.title, +b.dataset.price, b));
@@ -2421,7 +2433,7 @@ function renderDaily() {
   }
   if (mon) h += '</div>';
   $('lookbook').innerHTML = all.length ? h + (all.length > show.length ? `<button class="act" data-d="lball">Show all ${all.length}</button>` : '')
-    : '<p class="empty">Your fits land here. Snap one a day and watch your style history grow.</p>';
+    : '<p class="empty">Your fits land here. One a day and you\'ve got a style history.</p>';
   hydrate($('v-daily'));
 }
 const pollLeft = p => { const d = Math.ceil((p.exp - Date.now()) / 864e5); return p.gone || d <= 0 ? 'Closed' : d === 1 ? 'Last day' : `${d} days left`; };
@@ -2724,7 +2736,7 @@ function brStart() {
   const id = ovRun, still = REDUCED();
   const frame = now => {
     if (id !== ovRun || ov !== o || !o.run) return;
-    const el = now - o.run;
+    const el = Math.max(0, now - o.run);   // a frame stamped just before the start time would index phase -1
     if (el >= BR.SIDE * 4 * BR.ROUNDS) { brDone(); return; }
     const ph = Math.floor(el / BR.SIDE) % 4, fr = (el % BR.SIDE) / BR.SIDE, rd = Math.floor(el / (BR.SIDE * 4)) + 1;
     // the dot goes up the left side (in), across the top (hold), down the right (out), back along the bottom (hold)
