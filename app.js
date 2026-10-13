@@ -557,7 +557,7 @@ $('erase').onclick = () => {
   const keep = scrKeep([]);   // today's screen-time limit stays till midnight while the blocker is on
   if (!confirm(`Erase every habit, goal, level and fit photo on this phone? This cannot be undone.${keep.length ? ' Your screen time limit stays on till midnight.' : ''}`)) return;
   $('wo').hidden = true; $('wo').classList.remove('res'); woRes = null; stopTick(); keepOn(false); woRev++;
-  ovClose(); fitReq = null; Object.keys(fitURLs).forEach(fitForget); FitDB.clear().catch(() => {}); dlyRev++;
+  ovClose(); fitReq = fitLate = null; Object.keys(fitURLs).forEach(fitForget); FitDB.clear().catch(() => {}); dlyRev++;
   S = seed(); S.screen.plan = keep; save(); scrPush(); renderBody(); renderAll();   // native and JS agree on what is limited
 };
 
@@ -1980,6 +1980,7 @@ window.levelupScreenTimeChanged = () => { if (!scrOn()) return; scrRefresh(true)
 window.levelupOpenWorkout = () => {
   if (!$('wo').hidden && $('wo').classList.contains('res')) claimResults();
   $('rankup').classList.remove('open'); closeSheet();
+  ovClose(); puClose();   // a Daily screen or the push-up screen left open would sit on top of the workout
   if (!$('v-home').classList.contains('on')) document.querySelector('.nav button[data-v=home]').click();
   S.workout ? openWorkout() : pickSheet();
 };
@@ -2115,6 +2116,8 @@ async function puStart() {
     const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
     if (id !== puRun) { stream.getTracks().forEach(t => t.stop()); return; }
     pu.stream = stream;
+    // Android's camera dialog hides the page while it asks: allowed, so start again as soon as the page is back
+    if (document.hidden) { puStop(); pu.step = 'setup'; pu.again = true; puRender(); return; }
     const v = $('puVid'); v.srcObject = stream; await v.play();
     if (id !== puRun) return;
     wake(true); $('puTip').textContent = 'Almost ready...';
@@ -2240,7 +2243,9 @@ function puRender() {
   if (p.step !== 'live') el.focus({ preventScroll: true });   // the dialog itself, for screen readers; no ring on a button
 }
 document.addEventListener('visibilitychange', () => {   // the camera never runs in the background: pause, keep the count
-  if (document.hidden && pu && pu.step === 'live') { puStop(); pu.step = 'setup'; puRender(); }
+  // a camera still starting is left alone: Android's permission dialog hides the page, and its answer must land (see puStart)
+  if (document.hidden && pu && pu.step === 'live' && (pu.stream || pu.ready)) { puStop(); pu.step = 'setup'; puRender(); }
+  else if (!document.hidden && pu && pu.again) { pu.again = false; if (pu.step === 'setup') puStart(); }
 });
 
 /* ------------------------------------------------------------------ daily: fit of the day + wellness check-ins */
@@ -2389,7 +2394,7 @@ function renderToday() {
 }
 $('dstrip').onclick = () => document.querySelector('.nav button[data-v=daily]').click();
 
-let lbAll = false;
+let lbAll = false, lbKey = '';
 function renderDaily() {
   if (!$('v-daily').classList.contains('on')) return;
   const L = dlyLedger(), k = today(), d = L.today, w = S.well.days[k] || {}, n = DLY.filter(([id]) => d[id]).length;
@@ -2425,6 +2430,10 @@ function renderDaily() {
   // lookbook: newest first, by month
   const all = S.fits.slice().reverse(), show = lbAll ? all : all.slice(0, 18);
   $('lbCount').textContent = all.length ? all.length : '';
+  // rebuilt only when the fits shown change: hundreds of photos re-made on every water tap took most of a second
+  const key = `${all.length}|${show.map(x => x.id + x.day + x.vibe).join()}`;
+  if (key === lbKey && $('lookbook').firstChild) { hydrate($('v-daily')); return; }
+  lbKey = key;
   let h = '', mon = '';
   for (const x of show) {
     const m = fmtDate(x.day, { month: 'long', year: 'numeric' });
@@ -2637,6 +2646,8 @@ async function camStart() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw Object.assign(new Error('no camera API'), { name: 'NotFoundError' });
     const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: S.fitCam.facing }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
     if (id !== ovRun || ov !== o) { stream.getTracks().forEach(t => t.stop()); return; }
+    // Android's camera dialog hides the page while it asks: allowed, so start again as soon as the page is back
+    if (document.hidden) { stream.getTracks().forEach(t => t.stop()); o.paused = true; return; }
     o.stream = stream;
     const tr = stream.getVideoTracks()[0], st = tr && tr.getSettings ? tr.getSettings() : {};
     o.mirror = (st.facingMode || S.fitCam.facing) === 'user';
@@ -2764,7 +2775,8 @@ function brDone() {
 document.addEventListener('visibilitychange', () => {   // the camera and the breathing clock never run in the background
   if (!ov) return;
   if (document.hidden) {
-    if (ov.step === 'cam' && (ov.stream || !ov.ready)) { ovStop(); ov.paused = true; }
+    // a camera still starting is left alone: Android's permission dialog hides the page, and its answer must land (see camStart)
+    if (ov.step === 'cam' && ov.stream) { ovStop(); ov.paused = true; }
     if (ov.kind === 'breathe' && ov.step === 'run') brStop('Paused. Start again when you are ready.');
   } else if (ov.step === 'cam' && ov.paused) { ov.paused = false; camStart(); }
 });
@@ -2776,9 +2788,11 @@ const POLL_ERR = {
   not_found: 'This vote has closed.', other: "The voting site didn't answer right. Try again later.",
 };
 let fitReq = null;   // the link being made: {req, sel, title, timer}
+let fitLate = null;  // the last one the page stopped waiting for: a slow upload can still make it, and then it is kept
 const pollReq = {};  // id -> timeout while a refresh is out
 function askSheet(pre = []) {
-  const list = S.fits.slice().reverse().slice(0, 12);
+  // the 12 newest, plus any older fit it was opened for (Ask friends in the photo viewer)
+  const all = S.fits.slice().reverse(), list = all.filter((f, i) => i < 12 || pre.includes(f.id));
   if (!list.length) { showNote('No fits yet', 'Snap one first, then ask your friends.', FIT_NOTE, 'Daily Fit'); return; }
   let sel = pre.filter(id => list.some(f => f.id === id)).slice(0, 3);
   if (!sel.length) sel = [list[0].id];
@@ -2807,7 +2821,7 @@ function askSheet(pre = []) {
       try {
         const options = [];
         for (const id of ids) { const r = await FitDB.get(id).catch(() => null); if (!r || !r.full) throw Object.assign(new Error(), { why: 'missing' }); options.push({ img: await b64(await small(r.full)), label: '' }); }
-        const req = uid(); fitReq = { req, sel: ids, title, timer: setTimeout(() => window.levelupFitPollMade(req, '{"ok":false,"error":"timeout"}'), 60000) };
+        const req = uid(); fitReq = { req, sel: ids, title, timer: setTimeout(() => { fitLate = fitReq; window.levelupFitPollMade(req, '{"ok":false,"error":"timeout"}'); }, 60000) };
         LevelUpAndroid.createFitPoll(JSON.stringify({ req, title, options }));
       } catch (e) { askFailed(ids, title, e.why || 'other'); }
     };
@@ -2815,14 +2829,15 @@ function askSheet(pre = []) {
 }
 // native: the voting link is made (or not)
 window.levelupFitPollMade = (req, json) => {
-  if (!fitReq || fitReq.req !== req) return;
-  const q = fitReq; clearTimeout(q.timer); fitReq = null;
+  const late = !(fitReq && fitReq.req === req);
+  if (late && !(fitLate && fitLate.req === req)) return;
+  const q = late ? fitLate : fitReq; if (late) fitLate = null; else { clearTimeout(q.timer); fitReq = null; }
   let r; try { r = JSON.parse(json); } catch (e) { r = { ok: false, error: 'other' }; }
-  if (!r || !r.ok || !/^[A-Za-z0-9]{10}$/.test(r.id) || r.url !== POLL_URL + r.id) { askFailed(q.sel, q.title, (r && r.error) || 'other'); return; }
+  if (!r || !r.ok || !/^[A-Za-z0-9]{10}$/.test(r.id) || r.url !== POLL_URL + r.id) { if (!late) askFailed(q.sel, q.title, (r && r.error) || 'other'); return; }
   const p = { id: r.id, url: r.url, at: Date.now(), exp: Date.now() + 7 * 864e5, fits: q.sel, title: q.title, res: null };
   S.polls = S.polls.filter(x => x.id !== p.id).concat(p).slice(-20); save();
   renderPolls(); afterChange(); Sound.buy();
-  const open = $('sheetbg').classList.contains('open') && $('askGo');
+  const open = !late && $('sheetbg').classList.contains('open') && $('askGo');
   if (!open) { showNote('Voting link ready', 'Find it under Friend votes on Daily.', FIT_NOTE, 'Daily Fit'); return; }
   openSheet(`<h2>Link ready</h2><p class="dim">Send it to your friends. They tap the fit you should wear, no sign-up, and the votes show up on Daily.</p>
     <div class="linkbox">${esc(p.url.replace('https://', ''))}</div><button class="go fitgo" id="lkSend">${SEND_ICON}Send link</button><button class="ghost" id="lkOk">Done</button>
