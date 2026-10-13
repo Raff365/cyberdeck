@@ -2053,7 +2053,7 @@ async function puStart() {
     pu.stream = stream;
     const v = $('puVid'); v.srcObject = stream; await v.play();
     if (id !== puRun) return;
-    wake(true);
+    wake(true); $('puTip').textContent = 'Almost ready...';
     let pl; try { pl = await model; } catch (e) { e.name = 'model'; throw e; }
     if (id !== puRun) return;
     pu.pl = pl; pu.st = keep && keep.ar === v.videoWidth / v.videoHeight ? keep : Object.assign(puNew(v.videoWidth / v.videoHeight), keep ? { n: keep.n, first: keep.first } : {});
