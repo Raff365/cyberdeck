@@ -2,6 +2,7 @@ package app.levelup;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ClipData;
 import android.content.ComponentName;
 import android.content.ContentValues;
 import android.content.Intent;
@@ -35,6 +36,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Hosts the LEVEL UP web app. Every file ships inside the APK and is served from
@@ -61,6 +63,7 @@ public class MainActivity extends Activity {
     private File readyApk;                    // downloaded and checked, waiting for the app to be on screen
     private String openJs;                    // TRAIN INSTEAD / EMERGENCY UNLOCK was tapped: run once the page is ready
     private PermissionRequest camAsk;         // the page's camera request, waiting for Android's permission dialog
+    private final AtomicBoolean fitBusy = new AtomicBoolean();   // one voting link at a time
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -124,11 +127,14 @@ public class MainActivity extends Activity {
             public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
                 if (pendingPick != null) pendingPick.onReceiveValue(null);
                 pendingPick = callback;
+                // a Daily Fit photo (accept="image/*") or a backup (anything: some file managers mislabel .json)
+                boolean image = false;
+                for (String t : params.getAcceptTypes()) image |= t != null && t.startsWith("image/");
                 Intent pick = new Intent(Intent.ACTION_GET_CONTENT);
                 pick.addCategory(Intent.CATEGORY_OPENABLE);
-                pick.setType("*/*");
+                pick.setType(image ? "image/*" : "*/*");
                 try {
-                    startActivityForResult(Intent.createChooser(pick, "Choose a LEVEL UP backup"), PICK_FILE);
+                    startActivityForResult(Intent.createChooser(pick, image ? "Choose a photo" : "Choose a LEVEL UP backup"), PICK_FILE);
                     return true;
                 } catch (Exception e) {
                     pendingPick = null;
@@ -361,6 +367,21 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void share(Intent send) {
+        runOnUiThread(() -> {
+            try {
+                startActivity(Intent.createChooser(send, "Share your fit"));
+            } catch (Exception e) {
+                Toast.makeText(this, "Could not open sharing", Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    /** A Daily Fit answer back to the page, on the UI thread. */
+    private void fitDone(String fn, String key, String json) {
+        runOnUiThread(() -> js("window." + fn + " && window." + fn + "(" + JSONObject.quote(key) + "," + JSONObject.quote(json) + ")"));
+    }
+
     private void js(String code) {
         if (web != null) web.evaluateJavascript(code, null);
     }
@@ -459,6 +480,75 @@ public class MainActivity extends Activity {
                 }
             });
             return true;
+        }
+
+        // ---- Daily Fit: voting links on cinolo.com (no CORS, so never from the page) and Android's share sheet
+
+        /** {req, title, options:[{img, label}]}: answers later with window.levelupFitPollMade(req, {ok, id, url} | {ok:false, error}). */
+        @JavascriptInterface
+        public void createFitPoll(String json) {
+            String req = "";
+            try {
+                req = new JSONObject(json).optString("req", "");
+            } catch (Exception ignored) {
+            }
+            final String r = req.length() > 40 ? req.substring(0, 40) : req;
+            if (json == null || json.length() > 2_000_000) {
+                fitDone("levelupFitPollMade", r, "{\"ok\":false,\"error\":\"too_large\"}");
+                return;
+            }
+            if (!fitBusy.compareAndSet(false, true)) {
+                fitDone("levelupFitPollMade", r, "{\"ok\":false,\"error\":\"busy\"}");
+                return;
+            }
+            new Thread(() -> {
+                String res = FitPoll.create(json);
+                fitBusy.set(false);
+                fitDone("levelupFitPollMade", r, res);
+            }).start();
+        }
+
+        /** Answers later with window.levelupFitPollResult(id, {ok, poll} | {ok:false, error}). */
+        @JavascriptInterface
+        public void getFitPoll(String id) {
+            final String i = id == null ? "" : id;
+            new Thread(() -> fitDone("levelupFitPollResult", i, FitPoll.get(i))).start();
+        }
+
+        /** Android's share sheet with a line of text (the voting link). */
+        @JavascriptInterface
+        public boolean shareText(String text) {
+            if (text == null || text.isEmpty() || text.length() > 2000) return false;
+            Intent send = new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text);
+            share(send);
+            return true;
+        }
+
+        /** Shares a JPEG (base64, from the page) through the FileProvider: the fallback when a voting link can't be made. */
+        @JavascriptInterface
+        public boolean sharePhoto(String b64, String text) {
+            try {
+                if (b64 == null || b64.length() > 8_000_000) return false;
+                byte[] bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT);
+                if (bytes.length < 4 || (bytes[0] & 0xff) != 0xff || (bytes[1] & 0xff) != 0xd8) return false;
+                File dir = new File(getCacheDir(), "shares");
+                if (!dir.isDirectory() && !dir.mkdirs()) return false;
+                File[] old = dir.listFiles();   // earlier shares, once the app they went to has had time to read them
+                if (old != null) for (File f : old) if (System.currentTimeMillis() - f.lastModified() > 3_600_000L) f.delete();
+                File out = new File(dir, "fit-" + System.currentTimeMillis() + ".jpg");
+                try (FileOutputStream os = new FileOutputStream(out)) {
+                    os.write(bytes);
+                }
+                Uri uri = FileProvider.getUriForFile(MainActivity.this, getPackageName() + ".files", out);
+                Intent send = new Intent(Intent.ACTION_SEND).setType("image/jpeg").putExtra(Intent.EXTRA_STREAM, uri)
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                send.setClipData(ClipData.newRawUri("", uri));
+                if (text != null && !text.isEmpty() && text.length() <= 2000) send.putExtra(Intent.EXTRA_TEXT, text);
+                share(send);
+                return true;
+            } catch (Exception e) {
+                return false;
+            }
         }
 
         /** A limited app's name, for "Back to TikTok". "" if it isn't one. */

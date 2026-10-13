@@ -73,6 +73,7 @@ function seed() {
     workout: null, workouts: [], kit: 'home', units: /-US$/i.test(navigator.language || '') ? 'lb' : 'kg', woHint: false,
     muscleCap: {}, woPaid: {},
     screen: { plan: [], days: {} },
+    fits: [], fitKept: {}, polls: [], well: { goal: 8, bz: true, days: {} }, fitCam: { facing: 'user', timer: 5 },
   };
 }
 // One-time carry-over from the first prototype (localStorage key lockin.v1).
@@ -143,6 +144,42 @@ if (!S.screen || typeof S.screen !== 'object' || Array.isArray(S.screen)) S.scre
   const cut = ymd(addDays(new Date(), -(SCR_BACK + 1)));
   while (S.screen.plan.length > 1 && S.screen.plan[1].from <= cut) S.screen.plan.shift();
 }
+// ...and saves from before Daily get theirs. fits: [{id, day, at, vibe}], the photos themselves live in IndexedDB (never
+// in a backup); fitKept: {day: 1} past days whose photos were deleted, which still count; polls: voting links on cinolo.com
+// [{id, url, at, exp, fits: [fit ids], title, res: {choices, counts, total, at} | null, gone}]; well.days: {'YYYY-MM-DD':
+// {w: glasses, wg: the goal that day, s: {b, w} bed/wake 'HH:MM' (the night before), m: mood 1-5, n: note, b: breathing minutes, g: good thing}}
+const VIBES = ['Clean', 'Comfy', 'Sporty', 'Drip', 'Bold', 'Chill'];
+const POLL_URL = 'https://cinolo.com/fit/', POLL_KEEP = 3 * 864e5;   // a closed poll's last result shows 3 more days
+{
+  const isDay = k => typeof k === 'string' && /^\d{4}-\d\d-\d\d$/.test(k), t = today(), seen = new Set();
+  const str = (v, n) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n) : '');
+  const hm = v => typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v), int = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
+  S.fits = (Array.isArray(S.fits) ? S.fits : []).filter(f => f && typeof f.id === 'string' && /^[a-z0-9]{4,24}$/i.test(f.id) && !seen.has(f.id) && seen.add(f.id) && isDay(f.day))
+    .map(f => ({ id: f.id, day: f.day, at: typeof f.at === 'number' && f.at > 0 ? f.at : Date.parse(f.day + 'T12:00:00'), vibe: VIBES.includes(f.vibe) ? f.vibe : '' }))
+    .sort((a, b) => a.at - b.at);
+  const kept = S.fitKept && typeof S.fitKept === 'object' && !Array.isArray(S.fitKept) ? S.fitKept : {};
+  S.fitKept = {}; for (const k of Object.keys(kept)) if (isDay(k) && k < t) S.fitKept[k] = 1;
+  S.polls = (Array.isArray(S.polls) ? S.polls : []).filter(p => p && typeof p.id === 'string' && /^[A-Za-z0-9]{10}$/.test(p.id) && p.url === POLL_URL + p.id && typeof p.exp === 'number' && p.exp + POLL_KEEP > Date.now())
+    .map(p => {
+      const r = p.res, ok = r && Array.isArray(r.choices) && Array.isArray(r.counts) && r.choices.length === r.counts.length && r.choices.length <= 3 && r.counts.every(c => int(c, 0, 1e6));
+      return { id: p.id, url: p.url, at: typeof p.at === 'number' ? p.at : Date.now(), exp: p.exp, fits: (Array.isArray(p.fits) ? p.fits : []).filter(x => typeof x === 'string').slice(0, 3), title: str(p.title, 90),
+        res: ok ? { choices: r.choices.map(c => str(c, 60)), counts: r.counts, total: r.counts.reduce((a, c) => a + c, 0), at: typeof r.at === 'number' ? r.at : 0 } : null, ...(p.gone ? { gone: 1 } : {}) };
+    }).slice(-20);
+  const w = S.well && typeof S.well === 'object' && !Array.isArray(S.well) ? S.well : {}, wd = w.days && typeof w.days === 'object' && !Array.isArray(w.days) ? w.days : {};
+  S.well = { goal: int(w.goal, 4, 12) ? w.goal : 8, bz: w.bz !== false, days: {} };
+  for (const [k, d] of Object.entries(wd)) {
+    if (!isDay(k) || !d || typeof d !== 'object') continue;
+    const o = {};
+    if (int(d.w, 1, 20)) { o.w = d.w; if (int(d.wg, 4, 12)) o.wg = d.wg; }
+    if (d.s && hm(d.s.b) && hm(d.s.w)) o.s = { b: d.s.b, w: d.s.w };
+    if (int(d.m, 1, 5)) { o.m = d.m; if (str(d.n, 80)) o.n = str(d.n, 80); }
+    if (int(d.b, 1, 99)) o.b = d.b;
+    if (str(d.g, 120)) o.g = str(d.g, 120);
+    if (Object.keys(o).length) S.well.days[k] = o;
+  }
+  const c = S.fitCam || {};
+  S.fitCam = { facing: c.facing === 'environment' ? 'environment' : 'user', timer: [0, 3, 5, 10].includes(c.timer) ? c.timer : 5 };
+}
 const save =() => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -182,6 +219,9 @@ const Sound = (() => {
     nope() { if (!on()) return; note(180, 0, 0.12, { type: 'square', vol: 0.06 }); note(150, 0.12, 0.16, { type: 'square', vol: 0.06 }); },
     beep() { if (!on()) return; note(880, 0, 0.08, { type: 'square', vol: 0.05 }); },
     go() { if (!on()) return; note(660, 0, 0.1, { type: 'square', vol: 0.06 }); note(1320, 0.1, 0.25, { vol: 0.12 }); },
+    shutter() { if (!on()) return; noise(0, 0.06, 0.22); note(2200, 0, 0.04, { type: 'square', vol: 0.03 }); noise(0.09, 0.05, 0.12); },
+    drop() { if (!on()) return; note(700, 0, 0.1, { type: 'sine', vol: 0.1, to: 1400 }); note(1200, 0.07, 0.12, { type: 'sine', vol: 0.05, to: 600 }); },
+    breath(up) { if (!on()) return; note(up ? 262 : 392, 0, 3.4, { type: 'sine', vol: 0.06, to: up ? 392 : 262 }); },
   };
 })();
 
@@ -505,8 +545,9 @@ $('importFile').onchange = async e => {
 };
 $('erase').onclick = () => {
   const keep = scrKeep([]);   // today's screen-time limit stays till midnight while the blocker is on
-  if (!confirm(`Erase every habit, goal and level on this phone? This cannot be undone.${keep.length ? ' Your screen time limit stays on till midnight.' : ''}`)) return;
+  if (!confirm(`Erase every habit, goal, level and fit photo on this phone? This cannot be undone.${keep.length ? ' Your screen time limit stays on till midnight.' : ''}`)) return;
   $('wo').hidden = true; $('wo').classList.remove('res'); woRes = null; stopTick(); keepOn(false); woRev++;
+  ovClose(); fitReq = null; Object.keys(fitURLs).forEach(fitForget); FitDB.clear().catch(() => {}); dlyRev++;
   S = seed(); S.screen.plan = keep; save(); scrPush(); renderBody(); renderAll();   // native and JS agree on what is limited
 };
 
@@ -523,7 +564,7 @@ const closeSheet = () => {
   if (prevFocus && prevFocus.isConnected) prevFocus.focus({ preventScroll: true });
 };
 $('sheetbg').onclick = e => { if (e.target === $('sheetbg')) closeSheet(); };
-addEventListener('keydown', e => { if (e.key === 'Escape' && (!$('pu').hidden || $('rankup').classList.contains('open') || $('sheetbg').classList.contains('open') || !$('wo').hidden)) levelupBack(); });
+addEventListener('keydown', e => { if (e.key === 'Escape' && (!$('pu').hidden || $('rankup').classList.contains('open') || $('sheetbg').classList.contains('open') || !$('ov').hidden || !$('wo').hidden)) levelupBack(); });
 
 function habitSheet() {
   let pick = ALL.slice();
@@ -732,6 +773,17 @@ const ACH = [
   // android: only shown where they can be earned (the Android app), or once earned
   { id: 'scr1', name: 'Unplugged', desc: 'Finish a day under your screen limit', coins: 50, android: true, test: () => scrLedger().under >= 1 },
   { id: 'scr7', name: 'Touch Grass', desc: '7 days in a row under your screen limit', coins: 150, android: true, test: () => scrLedger().best >= 7 },
+  // Daily: fits and wellness check-ins
+  { id: 'fit1', name: 'Fit Check', desc: 'Log your first fit', coins: 25, test: () => dlyLedger().n.fit >= 1 },
+  { id: 'fit7', name: 'Drip Streak', desc: 'Log a fit 7 days in a row', coins: 150, test: () => dlyLedger().fitBest >= 7 },
+  { id: 'fit30', name: 'Lookbook', desc: 'Log 30 fits', coins: 300, test: () => dlyLedger().n.fit >= 30 },
+  { id: 'poll1', name: 'Crowd Pick', desc: 'Ask friends to vote on a fit', coins: 30, only: () => fitBridge(), test: () => S.polls.length >= 1 },
+  { id: 'water7', name: 'Hydrated', desc: 'Hit your water goal on 7 days', coins: 75, test: () => dlyLedger().n.water >= 7 },
+  { id: 'sleep7', name: 'Well Rested', desc: 'Log your sleep on 7 days', coins: 75, test: () => dlyLedger().n.sleep >= 7 },
+  { id: 'mood7', name: 'Vibe Check', desc: 'Check in your mood on 7 days', coins: 75, test: () => dlyLedger().n.mood >= 7 },
+  { id: 'zen10', name: 'Zen Mode', desc: 'Finish 10 breathing minutes', coins: 75, test: () => dlyLedger().breaths >= 10 },
+  { id: 'good7', name: 'Good Vibes', desc: 'Write down 7 good things', coins: 75, test: () => dlyLedger().n.journal >= 7 },
+  { id: 'daily7', name: 'Self-Care Streak', desc: 'Daily check-in 7 days in a row', coins: 200, test: () => dlyLedger().comboBest >= 7 },
 ];
 function unlock(id) {
   if (S.ach[id]) return;
@@ -742,7 +794,7 @@ function checkAchievements() { for (const a of ACH) if (!S.ach[a.id] && a.test &
 
 // coins are earned from what you did (so un-ticking a quest takes its coins back) minus what you spent
 const coins = () => checkins() * 10 + clearDays() * 50 + Object.keys(S.bossWins).length * BOSS_COINS
-  + ACH.reduce((a, x) => a + (S.ach[x.id] ? x.coins : 0), 0) + woLedger().coins + scrLedger().coins + S.bank - S.spent;
+  + ACH.reduce((a, x) => a + (S.ach[x.id] ? x.coins : 0), 0) + woLedger().coins + scrLedger().coins + dlyLedger().coins + S.bank - S.spent;
 let shownCoins = null;
 function renderCoins() {
   const c = coins(); $('coinsN').textContent = c.toLocaleString();
@@ -785,9 +837,9 @@ function renderLocker() {
     const own = S.owned.titles.includes(t), eq = S.equip.title === t;
     return `<button class="${eq ? 'eq' : own ? 'own' : ''}" data-title="${t}" data-price="${price}">${t}${own ? '' : `<small>${COIN_SM}${price}</small>`}</button>`;
   }).join('');
-  const shown = ACH.filter(a => !a.android || scrOn() || S.ach[a.id]), got = shown.filter(a => S.ach[a.id]).length;
+  const shown = ACH.filter(a => ((!a.android || scrOn()) && (!a.only || a.only())) || S.ach[a.id]), got = shown.filter(a => S.ach[a.id]).length;
   $('trophyCount').textContent = `${got}/${shown.length}`;
-  $('walletHow').textContent = `Earn coins: 10 per quest, 50 for clearing your day, up to 50 per workout, 250 per boss, ${scrOn() || scrLedger().coins > 0 ? 'up to 60 per day under your screen limit, ' : ''}plus trophies.`;
+  $('walletHow').textContent = `Earn coins: 10 per quest, 50 for clearing your day, up to 50 per workout, 250 per boss, ${scrOn() || scrLedger().coins > 0 ? 'up to 60 per day under your screen limit, ' : ''}10-15 per Daily check-in (+${CHECKIN_PAY} for ${CHECKIN_N}), plus trophies.`;
   $('trophies').innerHTML = shown.map(a => `<div class="trophy${S.ach[a.id] ? '' : ' locked'}"><div class="medal">${TROPHY}</div><b>${esc(a.name)}</b><small>${esc(a.desc)}<br>+${a.coins} coins</small></div>`).join('');
   $('skins').querySelectorAll('[data-skin]').forEach(b => b.onclick = () => shop('skins', 'skin', b.dataset.skin, +b.dataset.price, b));
   $('titles').querySelectorAll('[data-title]').forEach(b => b.onclick = () => shop('titles', 'title', b.dataset.title, +b.dataset.price, b));
@@ -833,7 +885,7 @@ if (window.LevelUpAndroid) {
   $('checkUpdate').onclick = () => { $('checkUpdate').textContent = 'Checking...'; LevelUpAndroid.checkForUpdate(); Sound.tap(); };
   try { $('appVersion').textContent = `Version ${LevelUpAndroid.version()}.`; } catch (e) {}
   // first open after an update: say so, so an update never lands silently
-  const WHATS_NEW = 'New: a screen time limit. Find it on Home';
+  const WHATS_NEW = 'New: the Daily tab. Snap your fit, drink water, breathe';
   try {
     const v = LevelUpAndroid.version(), seen = localStorage.getItem('levelup.version');
     if (hadSave && seen !== v) showNote('Updated!', `${v.split(' ')[0]} · ${WHATS_NEW}`);
@@ -2026,7 +2078,7 @@ window.levelupOpenPushups = pkg => {
   if (scrOn()) scrRefresh(true);
   let name = '';
   try { if (pkg && puBridge() && typeof LevelUpAndroid.appName === 'function') name = String(LevelUpAndroid.appName(pkg) || ''); } catch (e) {}
-  $('rankup').classList.remove('open'); closeSheet();
+  $('rankup').classList.remove('open'); closeSheet(); ovClose();
   if (pu) puStop();
   pu = { pkg: name ? pkg : null, name, step: 'setup', st: null, res: null, err: null, stream: null, frames: 0, poses: 0, ready: false };
   $('pu').hidden = false; puRender();
@@ -2179,6 +2231,645 @@ document.addEventListener('visibilitychange', () => {   // the camera never runs
   if (document.hidden && pu && pu.step === 'live') { puStop(); pu.step = 'setup'; puRender(); }
 });
 
+/* ------------------------------------------------------------------ daily: fit of the day + wellness check-ins */
+// Six small things a day (a fit, water, sleep, mood, a breathing minute, one good thing). Each pays once a day and doing
+// CHECKIN_N of them pays a bonus; like quests, every reward is derived from what is logged, so un-logging takes it back.
+// Fit photos stay on the phone in IndexedDB (S only keeps a log); only "Ask friends" sends one anywhere, and only when tapped.
+const DLY = [
+  ['fit', 'Fit', '#ff6fd8', 'M8.2 3L3 6l2 4.2 2.2-1V21h9.6V9.2l2.2 1L21 6l-5.2-3c-.6 1.7-2 2.7-3.8 2.7S8.8 4.7 8.2 3z', 'FIT LOGGED'],
+  ['water', 'Water', '#4fb4ff', 'M12 2.5s-6.5 7.3-6.5 11.8a6.5 6.5 0 0013 0C18.5 9.8 12 2.5 12 2.5z', 'HYDRATED'],
+  ['sleep', 'Sleep', '#9b8cff', 'M14.5 2.5a9.5 9.5 0 107 15.2 8 8 0 01-7-15.2z', 'SLEEP LOGGED'],
+  ['mood', 'Mood', '#ffc94a', 'M12 2a10 10 0 110 20 10 10 0 010-20zM8.6 8.4a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm6.8 0a1.5 1.5 0 100 3 1.5 1.5 0 000-3zM7.4 13.6c1 2.3 2.6 3.5 4.6 3.5s3.6-1.2 4.6-3.5z', 'CHECKED IN'],
+  ['breathe', 'Breathe', '#46e0c8', 'M3 7.2h10.5a2.7 2.7 0 10-2.7-2.7h-2a4.7 4.7 0 114.7 4.7H3zm0 4h15a3.5 3.5 0 11-3.5 3.5h2a1.5 1.5 0 101.5-1.5H3zm0 4h7v2H3z', 'ZEN'],
+  ['journal', 'Good thing', '#ff8f6b', 'M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4l-5.9 3.1 1.2-6.5-4.8-4.6 6.6-.9z', 'NOTED'],
+];
+const DLY_PAY = { fit: 15, water: 10, sleep: 10, mood: 10, breathe: 10, journal: 10 }, CHECKIN_N = 4, CHECKIN_PAY = 25;
+const dIcon = (id, cls = '') => { const x = DLY.find(d => d[0] === id); return `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="${x[3]}" fill="currentColor" fill-rule="evenodd"/></svg>`; };
+const CAM_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3.5h6L16.6 6H20a1.5 1.5 0 011.5 1.5v11A1.5 1.5 0 0120 20H4a1.5 1.5 0 01-1.5-1.5v-11A1.5 1.5 0 014 6h3.4zM12 8.5a4.5 4.5 0 100 9 4.5 4.5 0 000-9zm0 2a2.5 2.5 0 110 5 2.5 2.5 0 010-5z" fill="currentColor" fill-rule="evenodd"/></svg>';
+const PIC_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3.5h16A1.5 1.5 0 0121.5 5v14a1.5 1.5 0 01-1.5 1.5H4A1.5 1.5 0 012.5 19V5A1.5 1.5 0 014 3.5zm.5 2v11.3l4.3-4.6 3.1 3.2 4-5.2 3.6 4.6V5.5zM8 7a2 2 0 110 4 2 2 0 010-4z" fill="currentColor" fill-rule="evenodd"/></svg>';
+const FLIP_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 11a7.5 7.5 0 0113.2-4.6M19.5 13a7.5 7.5 0 01-13.2 4.6M18.5 2.5v4.4h-4.4M5.5 21.5v-4.4h4.4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const SEND_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 3a3 3 0 11-2.8 4l-5.5 3.2a3 3 0 010 1.6l5.5 3.2a3 3 0 11-1 1.7l-5.5-3.2a3 3 0 110-3l5.5-3.2A3 3 0 0117 3z" fill="currentColor"/></svg>';
+const ARROW = d => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d ? 'M9 5l7 7-7 7' : 'M15 5l-7 7 7 7'}" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const MOODS = [[1, 'Rough', '#8f9bff', 'M8 17.2c1-1.7 2.4-2.5 4-2.5s3 .8 4 2.5'], [2, 'Meh', '#b49cff', 'M8.5 16.4c1.1-.8 2.3-1.1 3.5-1.1s2.4.3 3.5 1.1'],
+  [3, 'Okay', '#cfc9ee', 'M8.5 15.6h7'], [4, 'Good', '#5fe0b5', 'M8 14.6c1 1.7 2.4 2.5 4 2.5s3-.8 4-2.5'], [5, 'Great', '#ffd23f', 'M7.4 13.6h9.2c-.6 2.7-2.4 4.1-4.6 4.1s-4-1.4-4.6-4.1z']];
+const face = m => { const x = MOODS[m - 1]; return `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="${x[2]}"/><circle cx="8.8" cy="10" r="1.4" fill="#0c0a1d"/><circle cx="15.2" cy="10" r="1.4" fill="#0c0a1d"/><path d="${x[3]}" ${m === 5 ? 'fill="#0c0a1d"' : 'fill="none" stroke="#0c0a1d" stroke-width="1.8" stroke-linecap="round"'}/></svg>`; };
+const GOOD_ASK = ['Something that made you smile', 'Someone who helped you out', 'Something you did well', "Something you're looking forward to", 'A song, game or show you liked', 'Something new you learned', 'A small win, any size'];
+const hm2m = v => +v.slice(0, 2) * 60 + +v.slice(3);
+const sleepMin = s => (s ? (hm2m(s.w) - hm2m(s.b) + 1440) % 1440 : 0);
+const fmtHM = m => `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ''}`;
+const wday = (k = today()) => S.well.days[k] || (S.well.days[k] = {});
+const fitBridge = () => !!(window.LevelUpAndroid && typeof LevelUpAndroid.createFitPoll === 'function');
+
+let dlyRev = 0, dlyMemo = null;   // dlyRev++ on every write to S.fits, S.fitKept or S.well (erase/import replace S, which also invalidates)
+function dayDone(k, fd) {
+  const w = S.well.days[k] || {};
+  return { fit: fd.has(k), water: (w.w || 0) >= (w.wg || S.well.goal), sleep: !!w.s, mood: !!w.m, breathe: (w.b || 0) > 0, journal: !!w.g };
+}
+function dlyLedger() {
+  const t = today();
+  if (dlyMemo && dlyMemo.rev === dlyRev && dlyMemo.s === S && dlyMemo.t === t) return dlyMemo.v;
+  const fd = new Set(S.fits.map(f => f.day)); for (const k of Object.keys(S.fitKept)) fd.add(k);
+  const n = { fit: 0, water: 0, sleep: 0, mood: 0, breathe: 0, journal: 0 }, combo = new Set();
+  let coins = 0, breaths = 0;
+  for (const k of new Set([...fd, ...Object.keys(S.well.days)])) {
+    const d = dayDone(k, fd); let c = 0;
+    for (const [id] of DLY) if (d[id]) { n[id]++; c++; coins += DLY_PAY[id]; }
+    if (c >= CHECKIN_N) { combo.add(k); coins += CHECKIN_PAY; }
+    breaths += (S.well.days[k] || {}).b || 0;
+  }
+  const run = set => { let x = 0, d = new Date(); if (!set.has(ymd(d))) d = addDays(d, -1); while (set.has(ymd(d))) { x++; d = addDays(d, -1); } return x; };
+  const best = set => { let b = 0, x = 0, prev = null; for (const k of [...set].sort()) { x = prev && ymd(addDays(new Date(prev + 'T12:00:00'), 1)) === k ? x + 1 : 1; prev = k; b = Math.max(b, x); } return b; };
+  const v = { coins, n, fd, combo, breaths, today: dayDone(t, fd), fitRun: run(fd), fitBest: best(fd), comboRun: run(combo), comboBest: best(combo) };
+  dlyMemo = { rev: dlyRev, s: S, t, v };
+  return v;
+}
+// every Daily write goes through here: what got done (or undone) today is diffed, so the floaters say exactly what was earned
+function dlyChange(fn) {
+  const k = today(), a = dlyLedger(), was = a.today, hadCombo = a.combo.has(k);
+  fn(); dlyRev++;
+  if (S.well.days[k] && !Object.keys(S.well.days[k]).length) delete S.well.days[k];
+  save();
+  const b = dlyLedger(), got = DLY.filter(([id]) => b.today[id] && !was[id]), lost = DLY.filter(([id]) => !b.today[id] && was[id]), combo = !hadCombo && b.combo.has(k);
+  for (const [id, , , , word] of got) floater(`${word} +${DLY_PAY[id]}`);
+  if (combo) { floater(`CHECK-IN +${CHECKIN_PAY}`); Sound.clear(); buzz([15, 40, 15, 40, 30]); } else if (got.length) { Sound.check(); buzz(12); } else if (lost.length) Sound.uncheck();
+  renderToday(); renderDaily(); afterChange();
+  return { got: got.length, lost: lost.length, combo };
+}
+
+/* photos: IndexedDB 'levelup-fits', one record per fit {id, full: JPEG Blob (<=1080px), thumb: JPEG Blob (<=360px)} */
+const FitDB = (() => {
+  let dbp = null;
+  const open = () => dbp || (dbp = new Promise((res, rej) => {
+    if (!window.indexedDB) throw new Error('no IndexedDB');
+    const r = indexedDB.open('levelup-fits', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('photos', { keyPath: 'id' });
+    r.onsuccess = () => { const db = r.result; db.onversionchange = () => { db.close(); dbp = null; }; res(db); };
+    r.onerror = () => rej(r.error || new Error('IndexedDB failed')); r.onblocked = () => rej(new Error('IndexedDB blocked'));
+  }).catch(e => { dbp = null; throw e; }));
+  const run = (mode, fn) => open().then(db => new Promise((res, rej) => {
+    const t = db.transaction('photos', mode), q = fn(t.objectStore('photos')); let out;
+    if (q) q.onsuccess = () => { out = q.result; };
+    t.oncomplete = () => res(out); t.onerror = t.onabort = () => rej(t.error || new Error('IndexedDB aborted'));
+  }));
+  return { put: r => run('readwrite', s => s.put(r)), get: id => run('readonly', s => s.get(id)), del: id => run('readwrite', s => s.delete(id)),
+    keys: () => run('readonly', s => s.getAllKeys()), clear: () => run('readwrite', s => s.clear()) };
+})();
+const fitURLs = {};   // id -> {thumb, full}: promises of object URLs, null when the photo isn't on this phone
+function fitSrc(id, sz = 'thumb') {
+  const c = fitURLs[id] || (fitURLs[id] = {});
+  return c[sz] || (c[sz] = FitDB.get(id).then(r => (r && r[sz] instanceof Blob ? URL.createObjectURL(r[sz]) : null)).catch(() => null));
+}
+function fitForget(id) { const c = fitURLs[id]; if (c) for (const p of Object.values(c)) p.then(u => u && URL.revokeObjectURL(u)); delete fitURLs[id]; }
+// <span class="ph"><img data-fit=id></span>: the shirt shows until (unless) the photo loads
+const ph = (id, sz = 'thumb', cls = '') => `<span class="ph${cls}">${dIcon('fit')}<img data-fit="${esc(id)}" data-sz="${sz}" alt=""></span>`;
+function hydrate(root) {
+  root.querySelectorAll('img[data-fit]:not([src])').forEach(im => fitSrc(im.dataset.fit, im.dataset.sz).then(u => { if (u && im.isConnected) im.src = u; }));
+}
+// decoded and upright (the EXIF turn applied), from a picked file
+async function loadImg(blob) {
+  if (window.createImageBitmap) try { return await createImageBitmap(blob, { imageOrientation: 'from-image' }); } catch (e) {}
+  return new Promise((res, rej) => {
+    const u = URL.createObjectURL(blob), im = new Image();
+    im.onload = () => { URL.revokeObjectURL(u); res(im); }; im.onerror = () => { URL.revokeObjectURL(u); rej(new Error('bad image')); }; im.src = u;
+  });
+}
+function grab(src, max) {   // a canvas copy, longest edge <= max
+  const w0 = src.videoWidth || src.naturalWidth || src.width, h0 = src.videoHeight || src.naturalHeight || src.height, k = Math.min(1, max / Math.max(w0, h0));
+  const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w0 * k)); c.height = Math.max(1, Math.round(h0 * k));
+  const g = c.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0, 0, c.width, c.height); g.drawImage(src, 0, 0, c.width, c.height);
+  return c;
+}
+const jpeg = (c, q) => new Promise((res, rej) => c.toBlob(b => (b ? res(b) : rej(new Error('encode failed'))), 'image/jpeg', q));
+async function shots(src) { const c = grab(src, 1080); return { full: await jpeg(c, 0.86), thumb: await jpeg(grab(c, 360), 0.78) }; }
+// the server takes <= 400 KB a photo: step the quality down, then the size
+async function small(blob, cap = 380 * 1024) {
+  const im = await loadImg(blob);
+  for (let max = 900; ; max = Math.round(max * 0.8)) {
+    const c = grab(im, max);
+    for (const q of [0.8, 0.7, 0.6]) { const b = await jpeg(c, q); if (b.size <= cap || max < 300) return b; }
+  }
+}
+const b64 = blob => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = () => rej(r.error); r.readAsDataURL(blob); });
+// 2-3 fits side by side, lettered like the voting page, for "share the photo instead"
+async function collage(ids) {
+  const ims = []; for (const id of ids) { const r = await FitDB.get(id).catch(() => null); if (r && r.full) ims.push(await loadImg(r.full)); }
+  if (!ims.length) throw new Error('no photos');
+  if (ims.length === 1) return small(await jpeg(grab(ims[0], 1080), 0.86), 900 * 1024);
+  const W = 600, H = 800, G = 12, c = document.createElement('canvas'); c.width = ims.length * W + (ims.length + 1) * G; c.height = H + 2 * G;
+  const g = c.getContext('2d'); g.fillStyle = '#0c0a1d'; g.fillRect(0, 0, c.width, c.height);
+  ims.forEach((im, i) => {
+    const w0 = im.naturalWidth || im.width, h0 = im.naturalHeight || im.height, k = Math.max(W / w0, H / h0), x = G + i * (W + G);
+    g.save(); g.beginPath(); g.rect(x, G, W, H); g.clip(); g.drawImage(im, x + (W - w0 * k) / 2, G + (H - h0 * k) / 2, w0 * k, h0 * k); g.restore();
+    g.fillStyle = '#ffd23f'; g.beginPath(); g.arc(x + 46, G + H - 46, 30, 0, 7); g.fill();
+    g.fillStyle = '#0c0a1d'; g.font = 'italic 800 38px "Barlow Condensed", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('ABC'[i], x + 46, G + H - 44);
+  });
+  return small(await jpeg(c, 0.86), 900 * 1024);
+}
+
+/* ---- home strip + the Daily tab */
+function renderToday() {
+  const L = dlyLedger(), d = L.today, n = DLY.filter(([id]) => d[id]).length, el = $('dstrip');
+  el.classList.toggle('done', n >= CHECKIN_N);
+  el.innerHTML = `<span class="tx"><b>Daily check-in</b><small>${n >= CHECKIN_N ? `Done · +${CHECKIN_PAY} bonus` : `${n}/${DLY.length} · ${CHECKIN_N - n} more for +${CHECKIN_PAY}`}</small></span>
+    <span class="dots">${DLY.map(([id, , c]) => `<i class="${d[id] ? 'on' : ''}" style="--c:${c}">${dIcon(id)}</i>`).join('')}</span>${CHEV_R}`;
+  el.setAttribute('aria-label', `Daily check-in: ${n} of ${DLY.length} done today. Open Daily`);
+  $('navDaily').classList.toggle('dot', n < CHECKIN_N && new Date().getHours() >= 9);
+}
+$('dstrip').onclick = () => document.querySelector('.nav button[data-v=daily]').click();
+
+let lbAll = false;
+function renderDaily() {
+  if (!$('v-daily').classList.contains('on')) return;
+  const L = dlyLedger(), k = today(), d = L.today, w = S.well.days[k] || {}, n = DLY.filter(([id]) => d[id]).length;
+  $('dlyCount').textContent = `${n}/${DLY.length}`;
+  $('dlyStreak').hidden = !L.comboRun; $('dlyStreakN').textContent = L.comboRun;
+  $('dlyStreak').setAttribute('aria-label', `${L.comboRun} check-in ${L.comboRun === 1 ? 'day' : 'days'} in a row`);
+  $('ckbar').classList.toggle('clear', n >= CHECKIN_N);
+  $('ckbar').innerHTML = DLY.map(([id], i) => `<i class="${i < n ? 'on' : ''}${i === CHECKIN_N - 1 ? ' ck4' : ''}"></i>`).join('');
+  $('cknote').textContent = n >= DLY.length ? 'All six. Legendary.' : n >= CHECKIN_N ? `Check-in done: +${CHECKIN_PAY} bonus. ${DLY.length - n} more for all six.` : `Do ${CHECKIN_N} of these today for a +${CHECKIN_PAY} bonus.`;
+  // today's fit
+  const mine = S.fits.filter(f => f.day === k), f = mine[mine.length - 1], fc = $('fitCard');
+  const streak = L.fitRun ? `<span class="fstk">${FLAME}${L.fitRun} day fit streak</span>` : '';
+  fc.className = `fitc${f ? ' has' : ''}`;
+  fc.innerHTML = f
+    ? `<button class="fitc-pic" data-d="view" data-id="${f.id}" aria-label="Today's fit, full screen">${ph(f.id, 'thumb')}${mine.length > 1 ? `<em>${mine.length}</em>` : ''}</button>
+      <div class="fitc-tx"><span class="label">Today's fit</span><b>Locked in</b>${f.vibe ? `<span class="vchip">${f.vibe}</span>` : ''}${streak}
+      <div class="fitc-act"><button class="fbtn" data-d="cam">${CAM_ICON}Another</button><button class="fbtn ask" data-d="ask">${SEND_ICON}Ask friends</button></div></div>`
+    : `<div class="fitc-hd"><span class="ic">${dIcon('fit')}</span><div><span class="label">Daily Fit · +${DLY_PAY.fit}</span><b>Snap today's fit</b>${streak || '<small>Prop your phone up, set the timer, strike a pose.</small>'}</div></div>
+      <div class="fitc-act"><button class="fbtn main" data-d="cam">${CAM_ICON}Snap</button><button class="fbtn" data-d="pick">${PIC_ICON}Upload</button></div>`;
+  // wellness tiles
+  const glasses = w.w || 0, goal = w.wg || S.well.goal, sl = w.s, mood = w.m;
+  const tile = (id, val, sub, act) => `<button class="wtile${d[id] ? ' on' : ''}" data-d="${act}" style="--c:${DLY.find(x => x[0] === id)[2]}"><span class="ic">${id === 'mood' && mood ? face(mood) : dIcon(id)}</span>
+    <span class="label">${DLY.find(x => x[0] === id)[1]}</span><b>${val}</b><small>${sub}</small>${d[id] ? `<span class="ok">${TICK}</span>` : ''}</button>`;
+  $('wtiles').innerHTML = `<div class="water${d.water ? ' on' : ''}" style="--f:${Math.min(100, glasses / goal * 100).toFixed(0)}%">
+      <button class="glass" data-d="w+" aria-label="Add a glass of water"><i></i>${dIcon('water', 'gd')}</button>
+      <div class="tx"><span class="label">Water</span><b>${glasses}<small> / ${goal}<i> glasses</i></small></b><button class="act quiet" data-d="wgoal">Goal: ${S.well.goal}</button></div>
+      <button class="wbtn" data-d="w-" aria-label="Remove a glass"${glasses ? '' : ' disabled'}>&minus;</button><button class="wbtn plus" data-d="w+" aria-label="Add a glass">+</button></div>
+    <div class="wgrid">${tile('sleep', sl ? fmtHM(sleepMin(sl)) : 'Log it', sl ? `${sl.b} to ${sl.w}` : 'Last night', 'sleep')}
+    ${tile('mood', mood ? MOODS[mood - 1][1] : 'How are you?', mood ? (w.n ? esc(w.n) : 'Checked in') : 'Tap a face', 'mood')}
+    ${tile('breathe', w.b ? `${w.b} min` : '1 min', w.b ? 'Calm unlocked' : 'Box breathing', 'breathe')}
+    ${tile('journal', w.g ? 'Written' : 'One line', w.g ? esc(w.g) : GOOD_ASK[new Date().getDay()], 'journal')}</div>`;
+  renderPolls();
+  // lookbook: newest first, by month
+  const all = S.fits.slice().reverse(), show = lbAll ? all : all.slice(0, 18);
+  $('lbCount').textContent = all.length ? all.length : '';
+  let h = '', mon = '';
+  for (const x of show) {
+    const m = fmtDate(x.day, { month: 'long', year: 'numeric' });
+    if (m !== mon) { if (mon) h += '</div>'; mon = m; h += `<div class="lbm label">${m}</div><div class="lb">`; }
+    h += `<button class="lbi" data-d="view" data-id="${x.id}" aria-label="Fit from ${fmtDate(x.day)}${x.vibe ? ', ' + x.vibe : ''}">${ph(x.id)}<small>${fmtDate(x.day, { weekday: 'short', day: 'numeric' })}${x.vibe ? ` · ${x.vibe}` : ''}</small></button>`;
+  }
+  if (mon) h += '</div>';
+  $('lookbook').innerHTML = all.length ? h + (all.length > show.length ? `<button class="act" data-d="lball">Show all ${all.length}</button>` : '')
+    : '<p class="empty">Your fits land here. Snap one a day and watch your style history grow.</p>';
+  hydrate($('v-daily'));
+}
+const pollLeft = p => { const d = Math.ceil((p.exp - Date.now()) / 864e5); return p.gone || d <= 0 ? 'Closed' : d === 1 ? 'Last day' : `${d} days left`; };
+function renderPolls() {
+  const el = $('polls'), list = S.polls.slice().reverse();
+  if (!list.length) { el.innerHTML = ''; return; }
+  el.innerHTML = '<div class="sec"><h2>Friend votes</h2></div><div class="rows">' + list.map(p => {
+    const r = p.res, open = !p.gone && p.exp > Date.now(), busy = !!pollReq[p.id], top = r && r.total ? Math.max(...r.counts) : -1;
+    const bars = r ? r.choices.map((c, i) => { const pc = r.total ? Math.round(r.counts[i] / r.total * 100) : 0; return `<div class="pbar${r.counts[i] === top ? ' lead' : ''}"><span>${esc(c)}</span><i><u style="width:${pc}%"></u></i><b>${pc}%</b></div>`; }).join('') : '';
+    return `<div class="poll${open ? '' : ' closed'}"><div class="poll-hd"><b>${esc(p.title || 'Which fit should I wear?')}</b><small>${r ? `${r.total} ${r.total === 1 ? 'vote' : 'votes'} · ` : ''}${pollLeft(p)}</small></div>
+      <div class="pthumbs">${p.fits.map((id, i) => `<span class="pt">${ph(id)}${p.fits.length > 1 ? `<em>${'ABC'[i]}</em>` : ''}</span>`).join('')}</div>
+      ${r ? bars : `<p class="dim">${open ? 'No votes yet. Send the link, then check back.' : 'Closed before any votes came in.'}</p>`}
+      ${p.err && open ? `<p class="dim">${esc(POLL_ERR[p.err] || POLL_ERR.other)}</p>` : ''}
+      ${open ? `<div class="poll-act"><button class="act" data-d="pref" data-id="${p.id}"${busy || !fitBridge() ? ' disabled' : ''}>${busy ? 'Checking...' : 'Check votes'}</button><button class="act quiet" data-d="psend" data-id="${p.id}">Send again</button></div>` : ''}</div>`;
+  }).join('') + '</div>';
+  hydrate(el);
+}
+$('v-daily').onclick = e => {
+  const b = e.target.closest('[data-d]'); if (!b || b.disabled) return;
+  const a = b.dataset.d;
+  if (a === 'cam') { Sound.tap(); camOpen(); }
+  else if (a === 'pick') { Sound.tap(); $('fitFile').click(); }
+  else if (a === 'view') { Sound.tap(); viewOpen(b.dataset.id); }
+  else if (a === 'ask') { Sound.tap(); askSheet(); }
+  else if (a === 'w+' || a === 'w-') water(a === 'w+' ? 1 : -1, b);
+  else if (a === 'wgoal') { Sound.tap(); goalSheetW(); }
+  else if (a === 'sleep') { Sound.tap(); sleepSheet(); }
+  else if (a === 'mood') { Sound.tap(); moodSheet(); }
+  else if (a === 'breathe') { Sound.tap(); brOpen(); }
+  else if (a === 'journal') { Sound.tap(); goodSheet(); }
+  else if (a === 'lball') { lbAll = true; renderDaily(); }
+  else if (a === 'pref') { Sound.tap(); pollRefresh(b.dataset.id, true); }
+  else if (a === 'psend') { Sound.tap(); const p = S.polls.find(x => x.id === b.dataset.id); if (p) sendLink(p); }
+};
+
+/* ---- water, sleep, mood, one good thing */
+function water(dn, btn) {
+  const k = today(), cur = (S.well.days[k] || {}).w || 0;
+  if (cur + dn < 0 || cur + dn > 20) { Sound.nope(); return; }
+  const r = dlyChange(() => { const d = wday(k); d.w = cur + dn; d.wg = S.well.goal; if (!d.w) { delete d.w; delete d.wg; } });
+  if (dn > 0) { if (!r.got && !r.combo) Sound.drop(); buzz(10); bubbles(); }
+  const g = $('wtiles').querySelector('.glass'); if (g && dn > 0) { g.classList.remove('slosh'); void g.offsetWidth; g.classList.add('slosh'); }
+  if (btn && btn.isConnected) btn.focus({ preventScroll: true }); else { const nb = $('wtiles').querySelector(`[data-d="${dn > 0 ? 'w+' : 'w-'}"]:not(.glass)`); if (nb && !nb.disabled) nb.focus({ preventScroll: true }); }
+}
+function bubbles() {
+  const g = $('wtiles').querySelector('.glass'); if (!g || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  for (let i = 0; i < 6; i++) { const b = document.createElement('span'); b.className = 'bub'; b.style.left = `${15 + Math.random() * 70}%`; b.style.animationDelay = `${i * 60}ms`; g.appendChild(b); b.addEventListener('animationend', () => b.remove()); setTimeout(() => b.remove(), 1500); }
+}
+function goalSheetW() {
+  openSheet(`<h2>Water goal</h2><p class="dim">Glasses a day. Pick what feels right for you.</p>
+    <div class="lim" id="wg">${[4, 5, 6, 7, 8, 9, 10, 11, 12].map(g => `<button data-g="${g}" class="${g === S.well.goal ? 'on' : ''}" aria-pressed="${g === S.well.goal}"><b>${g}</b></button>`).join('')}</div>
+    <span class="label">This week</span><div class="wkc bars wat">${weekCols(k => { const w = S.well.days[k] || {}; const f = Math.min(1, (w.w || 0) / (w.wg || S.well.goal)); return `<i style="--h:${(f * 100).toFixed(0)}%" class="${f >= 1 ? 'hit' : ''}"></i>`; })}</div>
+    <button class="go" id="wgOk">Done</button>`, el => {
+    el.querySelectorAll('[data-g]').forEach(b => b.onclick = () => {
+      Sound.tap(); const g = +b.dataset.g;
+      dlyChange(() => { S.well.goal = g; const d = S.well.days[today()]; if (d && d.w) d.wg = g; });
+      el.querySelectorAll('[data-g]').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', x === b); });
+    });
+    el.querySelector('#wgOk').onclick = closeSheet;
+  });
+}
+// the last 7 days, oldest first: each column a day letter and whatever cell(k) draws
+const weekCols = cell => Array.from({ length: 7 }, (_, i) => { const d = addDays(new Date(), i - 6), k = ymd(d); return `<span class="${i === 6 ? 'today' : ''}">${cell(k, d)}<small>${i === 6 ? 'Today' : DAY[d.getDay()]}</small></span>`; }).join('');
+function sleepSheet() {
+  const k = today(), cur = (S.well.days[k] || {}).s, last = cur || Object.keys(S.well.days).sort().reverse().map(x => S.well.days[x].s).find(Boolean) || { b: '22:00', w: '07:00' };
+  const bars = () => weekCols(x => { const m = sleepMin((S.well.days[x] || {}).s); return `<i class="${m ? 'hit' : ''}" style="--h:${Math.min(100, m / 720 * 100).toFixed(0)}%"><b>${m ? (m / 60).toFixed(m % 60 ? 1 : 0) : ''}</b></i>`; });
+  openSheet(`<h2>Sleep</h2><p class="dim">Last night. Just a log: notice how you feel after more or less.</p>
+    <div class="slp"><label class="field"><span class="label">Went to bed</span><input type="time" id="sB" value="${last.b}"></label><label class="field"><span class="label">Woke up</span><input type="time" id="sW" value="${last.w}"></label></div>
+    <div class="slp-h"><b id="sH"></b><small>of sleep</small></div>
+    <button class="go" id="sOk">${cur ? 'Update' : 'Log sleep'}</button>${cur ? '<div class="row2"><span></span><button class="act quiet" id="sDel">Clear today</button></div>' : ''}
+    <span class="label">This week</span><div class="wkc bars" id="sBars">${bars()}</div><p class="dim sm">Hours slept, by the day you woke up.</p>`, el => {
+    const B = el.querySelector('#sB'), W = el.querySelector('#sW'), ok = el.querySelector('#sOk');
+    const paint = () => { const good = /^\d\d:\d\d/.test(B.value) && /^\d\d:\d\d/.test(W.value); ok.disabled = !good; el.querySelector('#sH').textContent = good ? fmtHM(sleepMin({ b: B.value.slice(0, 5), w: W.value.slice(0, 5) })) : '--'; };
+    B.oninput = W.oninput = paint; paint();
+    ok.onclick = () => { dlyChange(() => { wday(k).s = { b: B.value.slice(0, 5), w: W.value.slice(0, 5) }; }); closeSheet(); };
+    const del = el.querySelector('#sDel'); if (del) del.onclick = () => { dlyChange(() => { delete wday(k).s; }); closeSheet(); };
+  });
+}
+function moodSheet() {
+  const k = today(), cur = S.well.days[k] || {}; let pick = cur.m || 0;
+  openSheet(`<h2>Mood</h2><p class="dim">How's today going? Every answer counts.</p>
+    <div class="moods" role="radiogroup" aria-label="Mood">${MOODS.map(([m, n]) => `<button role="radio" data-m="${m}" aria-checked="${m === pick}" class="${m === pick ? 'on' : ''}">${face(m)}<small>${n}</small></button>`).join('')}</div>
+    <p class="dim kind" id="mKind"${pick === 1 ? '' : ' hidden'}>Rough days happen. Talking to someone you trust can help.</p>
+    <label class="field"><span class="label">What's up? (optional)</span><input id="mN" maxlength="80" value="${esc(cur.n || '')}" placeholder="One line" autocomplete="off"></label>
+    <button class="go" id="mOk"${pick ? '' : ' disabled'}>${cur.m ? 'Update' : 'Check in'}</button>${cur.m ? '<div class="row2"><span></span><button class="act quiet" id="mDel">Clear today</button></div>' : ''}
+    <span class="label">This week</span><div class="wkc faces">${weekCols(x => { const m = (S.well.days[x] || {}).m; return m ? face(m) : '<i></i>'; })}</div>`, el => {
+    el.querySelectorAll('[data-m]').forEach(b => b.onclick = () => {
+      pick = +b.dataset.m; Sound.tap();
+      el.querySelectorAll('[data-m]').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-checked', x === b); });
+      el.querySelector('#mKind').hidden = pick !== 1; el.querySelector('#mOk').disabled = false;
+    });
+    el.querySelector('#mOk').onclick = () => { const n = el.querySelector('#mN').value.replace(/\s+/g, ' ').trim().slice(0, 80); dlyChange(() => { const d = wday(k); d.m = pick; if (n) d.n = n; else delete d.n; }); closeSheet(); };
+    const del = el.querySelector('#mDel'); if (del) del.onclick = () => { dlyChange(() => { const d = wday(k); delete d.m; delete d.n; }); closeSheet(); };
+  });
+}
+function goodSheet() {
+  const k = today(), cur = (S.well.days[k] || {}).g || '';
+  const past = Object.keys(S.well.days).filter(x => x !== k && S.well.days[x].g).sort().reverse().slice(0, 7);
+  openSheet(`<h2>One good thing</h2><p class="dim">${GOOD_ASK[new Date().getDay()]}?</p>
+    <label class="field"><span class="label">Today</span><input id="gT" maxlength="120" value="${esc(cur)}" placeholder="Big or tiny, it counts" autocomplete="off"></label>
+    <button class="go" id="gOk"${cur ? '' : ' disabled'}>${cur ? 'Update' : 'Save'}</button>${cur ? '<div class="row2"><span></span><button class="act quiet" id="gDel">Clear today</button></div>' : ''}
+    ${past.length ? `<span class="label">Lately</span><div class="glist">${past.map(x => `<p><small>${fmtDate(x)}</small>${esc(S.well.days[x].g)}</p>`).join('')}</div>` : ''}
+    <p class="st-foot">Private: it stays on this phone (and in your backups).</p>`, el => {
+    const T = el.querySelector('#gT'), ok = el.querySelector('#gOk');
+    T.oninput = () => { ok.disabled = !T.value.trim(); };
+    T.onkeydown = e => { if (e.key === 'Enter' && !ok.disabled) ok.click(); };
+    ok.onclick = () => { const v = T.value.replace(/\s+/g, ' ').trim().slice(0, 120); dlyChange(() => { wday(k).g = v; }); closeSheet(); };
+    const del = el.querySelector('#gDel'); if (del) del.onclick = () => { dlyChange(() => { delete wday(k).g; }); closeSheet(); };
+  });
+}
+
+/* ---- full-screen Daily screens (#ov): camera, review, photo, breathe. Below sheets, above everything else */
+let ov = null, ovRun = 0;   // ov: the open screen (never saved); ovRun: bumps to cancel a running camera or breathing loop
+const REDUCED = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+function ovOpen(o) { closeSheet(); if (ov) { ovStop(); if (ov.url) URL.revokeObjectURL(ov.url); } ov = o; $('ov').hidden = false; ovRender(); }
+function ovStop() {
+  ovRun++;
+  if (!ov) return;
+  if (ov.stream) { ov.stream.getTracks().forEach(t => t.stop()); ov.stream = null; }
+  const v = $('ovVid'); if (v) { try { v.pause(); } catch (e) {} v.srcObject = null; }
+  clearInterval(ov.tick); ov.tick = null; ov.t0 = 0; ov.run = 0;
+  wake(woAwake);
+}
+function ovClose() {
+  if (!ov) return;
+  ovStop(); if (ov.url) URL.revokeObjectURL(ov.url);
+  ov = null; $('ov').hidden = true; $('ovIn').innerHTML = '';
+}
+const ovTop = (mid = '', right = '<span></span>') => `<div class="pu-top"><button class="pu-x" data-o="close" aria-label="Close">${X_ICON}</button><div class="mid">${mid}</div>${right}</div>`;
+function ovRender() {
+  const o = ov, el = $('ovIn'); let h = '';
+  $('ov').className = `pu ov ${o.kind}${['cam', 'review', 'view'].includes(o.step) ? ' live' : ''}`;
+  if (o.step === 'cam') {
+    h = ovTop(`<b>Snap your fit</b><span id="fcTm">${S.fitCam.timer ? `${S.fitCam.timer}s timer` : 'No timer'}</span>`)
+      + `<div class="pu-stage fcam${o.mirror ? ' mirror' : ''}" data-load="${o.ready ? 0 : 1}"><video id="ovVid" playsinline muted></video><div class="fc-num" id="fcNum" aria-hidden="true"></div><div class="fc-flash" id="fcFlash"></div>
+        <div class="pu-load"><i></i>Starting the camera...</div></div>
+      <div class="fc-tm" role="radiogroup" aria-label="Self-timer">${[0, 3, 5, 10].map(t => `<button role="radio" data-o="tm" data-t="${t}" aria-checked="${t === S.fitCam.timer}" class="${t === S.fitCam.timer ? 'on' : ''}">${t ? t + 's' : 'Off'}</button>`).join('')}</div>
+      <div class="fc-ctl"><button class="fc-side" data-o="pick" aria-label="Pick from your photos">${PIC_ICON}</button><button class="fc-shut" id="fcShut" data-o="shoot" aria-label="Take the photo"><i></i></button><button class="fc-side" data-o="flip" aria-label="Switch camera">${FLIP_ICON}</button></div>
+      <p class="fc-tip" id="fcTip">${S.fitCam.timer ? 'Prop the phone up, tap, step back, pose' : 'Tap to snap'}</p><p class="sr" id="fcSay" aria-live="assertive"></p>`;
+  } else if (o.step === 'review' || o.step === 'view') {
+    const f = o.step === 'view' && S.fits.find(x => x.id === o.id), list = S.fits.slice().reverse(), i = f ? list.indexOf(f) : -1, vibe = f ? f.vibe : o.vibe;
+    h = ovTop(f ? `<b>${fmtDate(f.day, { weekday: 'long', day: 'numeric', month: 'short' })}</b><span>${i + 1} of ${list.length}</span>` : '<b>Your fit</b><span>Looking good</span>')
+      + `<div class="pu-stage fpic">${f ? ph(f.id, 'full', ' big') : `<img src="${o.url}" alt="Your fit">`}
+        ${f && list.length > 1 ? `<button class="fnav l" data-o="prev" aria-label="Newer fit"${i <= 0 ? ' disabled' : ''}>${ARROW(0)}</button><button class="fnav r" data-o="next" aria-label="Older fit"${i >= list.length - 1 ? ' disabled' : ''}>${ARROW(1)}</button>` : ''}</div>
+      <div class="vibes" role="group" aria-label="Vibe, optional"><span class="label">Vibe</span>${VIBES.map(v => `<button data-o="vibe" data-v="${v}" aria-pressed="${v === vibe}" class="${v === vibe ? 'on' : ''}">${v}</button>`).join('')}</div>
+      <div class="pu-act">${f ? `<div class="pair2"><button class="ghost" data-o="del">Delete</button><button class="go" data-o="ask">${SEND_ICON}Ask friends</button></div>`
+        : `<button class="go" data-o="save">${S.fits.some(x => x.day === today()) ? 'Save fit' : `Save fit · +${DLY_PAY.fit}`}</button><button class="ghost" data-o="${o.from === 'cam' ? 'retake' : 'repick'}">${o.from === 'cam' ? 'Retake' : 'Pick another'}</button>`}</div>`;
+  } else if (o.step === 'err') {
+    const E = { denied: ["Camera's off", 'Allow the camera in App info > Permissions > Camera, or pick a photo instead.'], busy: ['Camera busy', 'Another app is using the camera. Close it and try again, or pick a photo.'], nocam: ['No camera', "Couldn't start a camera on this phone. Pick a photo instead."] }[o.err] || ['No camera', ''];
+    h = ovTop() + `<div class="pu-body"><div class="wo-kick">Daily Fit</div><h2 class="pu-hd sm">${E[0]}</h2><p class="pu-sub">${E[1]}</p></div>
+      <div class="pu-act"><button class="go" data-o="pick">${PIC_ICON}Pick a photo</button>${o.err === 'denied' && scrOn() ? '<button class="ghost" data-o="settings">Open settings</button>' : ''}${o.err === 'nocam' ? '' : '<button class="ghost" data-o="retake">Try again</button>'}</div>`;
+  } else if (o.kind === 'breathe') {
+    const done = o.step === 'done';
+    h = ovTop(`<b>Breathe</b><span>${done ? 'Done' : 'Box breathing · 1 min'}</span>`)
+      + `<div class="br${o.run ? ' run' : ''}"><div class="br-box"><i class="br-orb" id="brOrb"></i><i class="br-dot" id="brDot"></i>
+        <div class="br-say"><b id="brSay">${done ? 'Nice.' : o.run ? '' : 'Ready?'}</b><span id="brN">${done ? 'One calm minute' : o.run ? '' : 'In 4 · hold 4 · out 4 · hold 4'}</span></div></div>
+        <p class="br-round" id="brRound">${done ? ((S.well.days[today()] || {}).b > 1 ? 'Another calm minute, logged' : `+${DLY_PAY.breathe} coins`) : o.note ? esc(o.note) : 'Four rounds. Follow the dot around the box.'}</p><p class="sr" id="brSr" aria-live="polite"></p></div>
+      <div class="pu-act"><div class="br-tg"><button class="act" data-o="snd">Sound: ${S.sound === false ? 'Off' : 'On'}</button><button class="act" data-o="bz">Buzz: ${S.well.bz ? 'On' : 'Off'}</button></div>
+        ${o.run ? '<button class="ghost" data-o="brstop">Stop</button>' : done ? '<button class="go" data-o="close">Done</button><button class="ghost" data-o="brgo">Again</button>' : '<button class="go" data-o="brgo">Start</button>'}</div>`;
+  }
+  el.innerHTML = h;
+  if (o.step === 'view') hydrate(el);
+  if (o.step === 'cam' && o.stream) { const v = $('ovVid'); v.srcObject = o.stream; v.play().catch(() => {}); }
+  if (o.step !== 'cam') el.focus({ preventScroll: true });
+}
+$('ovIn').onclick = e => {
+  const b = e.target.closest('[data-o]'); if (!b || b.disabled || !ov) return;
+  const a = b.dataset.o, o = ov;
+  if (a !== 'shoot' && a !== 'vibe') Sound.tap();
+  if (a === 'close') ovClose();
+  else if (a === 'shoot') camShoot();
+  else if (a === 'tm') { if (o.t0) camCancel(); S.fitCam.timer = +b.dataset.t; save(); camPaint(); }
+  else if (a === 'flip') { if (o.t0) camCancel(); S.fitCam.facing = S.fitCam.facing === 'user' ? 'environment' : 'user'; save(); camStart(); }
+  else if (a === 'pick' || a === 'repick') $('fitFile').click();
+  else if (a === 'retake') camOpen();
+  else if (a === 'settings') { let ok = false; try { ok = LevelUpAndroid.openScreenTimeSettings('appinfo') === true; } catch (e) {} if (!ok) showNote("Couldn't open Settings", 'Open Settings > Apps > LEVEL UP > Permissions', FIT_NOTE, 'Camera'); }
+  else if (a === 'vibe') {
+    Sound.tap(); const v = b.dataset.v, f = o.step === 'view' && S.fits.find(x => x.id === o.id);
+    if (f) { f.vibe = f.vibe === v ? '' : v; dlyRev++; save(); renderDaily(); } else o.vibe = o.vibe === v ? '' : v;
+    const now = f ? f.vibe : o.vibe; $('ovIn').querySelectorAll('[data-o=vibe]').forEach(x => { x.classList.toggle('on', x.dataset.v === now); x.setAttribute('aria-pressed', x.dataset.v === now); });
+  }
+  else if (a === 'save') fitSave();
+  else if (a === 'prev' || a === 'next') { const list = S.fits.slice().reverse(), i = list.findIndex(x => x.id === o.id), n = list[i + (a === 'next' ? 1 : -1)]; if (n) { o.id = n.id; ovRender(); } }
+  else if (a === 'del') fitDelete(o.id);
+  else if (a === 'ask') { const id = o.id; ovClose(); askSheet([id]); }
+  else if (a === 'brgo') brStart();
+  else if (a === 'brstop') { brStop('Stopped early. Finish the whole minute to log it.'); }
+  else if (a === 'snd') { S.sound = S.sound === false; save(); paintSound(); b.textContent = `Sound: ${S.sound === false ? 'Off' : 'On'}`; }
+  else if (a === 'bz') { S.well.bz = !S.well.bz; save(); b.textContent = `Buzz: ${S.well.bz ? 'On' : 'Off'}`; if (S.well.bz) buzz(20); }
+};
+const FIT_NOTE = dIcon('fit');
+
+/* camera: front by default (prop the phone, step back), a self-timer, the photo saved the right way round (not mirrored) */
+function camOpen() { ovOpen({ kind: 'fit', step: 'cam', ready: false }); camStart(); }
+async function camStart() {
+  const o = ov; if (!o) return;
+  if (o.stream) { o.stream.getTracks().forEach(t => t.stop()); o.stream = null; }
+  const id = ++ovRun;
+  Object.assign(o, { step: 'cam', ready: false, err: null }); ovRender();
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw Object.assign(new Error('no camera API'), { name: 'NotFoundError' });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: S.fitCam.facing }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+    if (id !== ovRun || ov !== o) { stream.getTracks().forEach(t => t.stop()); return; }
+    o.stream = stream;
+    const tr = stream.getVideoTracks()[0], st = tr && tr.getSettings ? tr.getSettings() : {};
+    o.mirror = (st.facingMode || S.fitCam.facing) === 'user';
+    const v = $('ovVid'); v.srcObject = stream; await v.play();
+    if (id !== ovRun || ov !== o) return;
+    o.ready = true; wake(true); camPaint();
+  } catch (e) {
+    if (id !== ovRun || ov !== o) return;
+    ovStop();
+    const n = e && e.name;
+    o.err = n === 'NotAllowedError' || n === 'SecurityError' || n === 'PermissionDeniedError' ? 'denied' : n === 'NotReadableError' || n === 'AbortError' || n === 'TrackStartError' ? 'busy' : 'nocam';
+    o.step = 'err'; ovRender(); Sound.nope();
+  }
+}
+function camPaint() {   // in place: the video element must never be rebuilt
+  const o = ov, el = $('ovIn'); if (!o || o.step !== 'cam' || !el.querySelector('.fcam')) return;
+  const stg = el.querySelector('.fcam'); stg.dataset.load = o.ready ? '0' : '1'; stg.classList.toggle('mirror', !!o.mirror);
+  el.querySelectorAll('[data-o=tm]').forEach(b => { const on = +b.dataset.t === S.fitCam.timer; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
+  $('fcTm').textContent = S.fitCam.timer ? `${S.fitCam.timer}s timer` : 'No timer';
+  $('fcShut').classList.toggle('counting', !!o.t0); $('fcShut').setAttribute('aria-label', o.t0 ? 'Cancel the timer' : 'Take the photo');
+  $('fcTip').textContent = o.t0 ? 'Tap the button to cancel' : S.fitCam.timer ? 'Prop the phone up, tap, step back, pose' : 'Tap to snap';
+}
+function camShoot() {
+  const o = ov; if (!o || !o.ready) return;
+  if (o.t0) { camCancel(); Sound.uncheck(); return; }
+  const n = S.fitCam.timer;
+  if (!n) { camSnap(); return; }
+  Sound.tap(); o.t0 = Date.now(); o.last = 0;
+  const num = $('fcNum');
+  const step = () => {
+    const left = Math.ceil((o.t0 + n * 1000 - Date.now()) / 1000);
+    if (left <= 0) { clearInterval(o.tick); o.tick = null; o.t0 = 0; num.textContent = ''; camSnap(); return; }
+    if (left !== o.last) {
+      o.last = left; num.textContent = left; num.classList.remove('pop'); void num.offsetWidth; num.classList.add('pop'); $('fcSay').textContent = left;
+      if (left <= 3) { Sound.beep(); buzz(25); }
+    }
+  };
+  o.tick = setInterval(step, 100); step(); camPaint();
+}
+function camCancel() { const o = ov; if (!o) return; clearInterval(o.tick); o.tick = null; o.t0 = 0; const n = $('fcNum'); if (n) n.textContent = ''; camPaint(); }
+async function camSnap() {
+  const o = ov, v = $('ovVid'); if (!o || !v || !v.videoWidth) return;
+  const c = grab(v, 1080);   // the frame first, then the camera goes off
+  const fl = $('fcFlash'); if (fl) { fl.classList.remove('go'); void fl.offsetWidth; fl.classList.add('go'); }
+  Sound.shutter(); buzz(40);
+  const id = ovRun;
+  try {
+    const full = await jpeg(c, 0.86), thumb = await jpeg(grab(c, 360), 0.78);
+    if (ov !== o || id !== ovRun) return;
+    ovStop(); toReview({ full, thumb }, 'cam');
+  } catch (e) { showNote("Couldn't take the photo", 'Try again, or pick one from your photos.', FIT_NOTE, 'Daily Fit'); }
+}
+function toReview(p, from) {
+  if (ov && ov.url) URL.revokeObjectURL(ov.url);
+  if (!ov || ov.kind !== 'fit') ovOpen({ kind: 'fit' });
+  Object.assign(ov, { step: 'review', from, full: p.full, thumb: p.thumb, url: URL.createObjectURL(p.full), vibe: ov.vibe || '' });
+  ovRender();
+}
+$('fitFile').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  try {
+    if (!/^image\//.test(f.type) && !/\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i.test(f.name)) throw new Error('not an image');
+    const im = await loadImg(f), p = await shots(im);
+    if (ov && ov.kind === 'fit') ovStop();
+    toReview(p, 'pick');
+  } catch (err) { Sound.nope(); showNote("Couldn't open that photo", 'Try a JPG or PNG from your gallery.', FIT_NOTE, 'Daily Fit'); }
+};
+async function fitSave() {
+  const o = ov; if (!o || o.saving) return;
+  o.saving = true;
+  const id = uid() + uid(), at = Date.now();
+  let stored = true;
+  try { await FitDB.put({ id, full: o.full, thumb: o.thumb, at }); } catch (e) { stored = false; }
+  const k = ymd(new Date(at));
+  dlyChange(() => { S.fits.push({ id, day: k, at, vibe: o.vibe || '' }); });
+  if (ov === o) ovClose();
+  if (!stored) showNote('Fit logged, photo not saved', "This phone wouldn't store the photo. Your streak still counts.", FIT_NOTE, 'Daily Fit');
+}
+function fitDelete(id) {
+  const f = S.fits.find(x => x.id === id); if (!f) return;
+  const k = today(), last = !S.fits.some(x => x !== f && x.day === f.day);
+  if (!confirm(f.day === k && last ? `Delete today's fit? Today's +${DLY_PAY.fit} goes with it.` : f.day < k && last ? 'Delete this photo? That day still counts for your streak.' : 'Delete this photo?')) return;
+  const list = S.fits.slice().reverse(), i = list.indexOf(f), next = list[i + 1] || list[i - 1];
+  dlyChange(() => { S.fits = S.fits.filter(x => x !== f); if (f.day < k && last) S.fitKept[f.day] = 1; });
+  S.polls.forEach(p => { if (p.fits.includes(id)) p.fits = p.fits.map(x => (x === id ? '' : x)); });
+  FitDB.del(id).catch(() => {}); fitForget(id);
+  if (ov && ov.step === 'view') { if (next) { ov.id = next.id; ovRender(); } else ovClose(); }
+}
+function viewOpen(id) { if (S.fits.some(f => f.id === id)) ovOpen({ kind: 'fit', step: 'view', id }); }
+
+/* breathe: box breathing, 4 rounds of in 4 / hold 4 / out 4 / hold 4 = 64 s, all from one start time */
+const BR = { SIDE: 4000, ROUNDS: 4 }, BR_SAY = ['Breathe in', 'Hold', 'Breathe out', 'Hold'];
+function brOpen() { ovOpen({ kind: 'breathe', step: 'intro' }); }
+function brStart() {
+  const o = ov; ovStop();
+  Object.assign(o, { step: 'run', run: performance.now(), ph: -1, note: '' }); wake(true); ovRender();
+  const id = ovRun, still = REDUCED();
+  const frame = now => {
+    if (id !== ovRun || ov !== o || !o.run) return;
+    const el = now - o.run;
+    if (el >= BR.SIDE * 4 * BR.ROUNDS) { brDone(); return; }
+    const ph = Math.floor(el / BR.SIDE) % 4, fr = (el % BR.SIDE) / BR.SIDE, rd = Math.floor(el / (BR.SIDE * 4)) + 1;
+    // the dot goes up the left side (in), across the top (hold), down the right (out), back along the bottom (hold)
+    const [x, y] = [[0, 1 - fr], [fr, 0], [1, fr], [1 - fr, 1]][ph], s = [0.55 + 0.45 * fr, 1, 1 - 0.45 * fr, 0.55][ph];
+    const dot = $('brDot'), orb = $('brOrb');
+    if (dot && !still) { dot.style.left = `${x * 100}%`; dot.style.top = `${y * 100}%`; orb.style.transform = `scale(${s.toFixed(3)})`; }
+    const n = String(4 - Math.floor(fr * 4));
+    if ($('brN').textContent !== n) $('brN').textContent = n;
+    if (ph !== o.ph) {
+      o.ph = ph; $('brSay').textContent = BR_SAY[ph]; $('brRound').textContent = `Round ${rd} of ${BR.ROUNDS}`; $('brSr').textContent = BR_SAY[ph];
+      if (still) orb.style.transform = `scale(${ph === 0 || ph === 1 ? 1 : 0.55})`;
+      if (ph === 0 || ph === 2) Sound.breath(ph === 0); else Sound.tap();
+      if (S.well.bz) buzz(ph === 0 ? [30, 60, 30] : 30);
+    }
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+}
+function brStop(note) { const o = ov; if (!o || o.kind !== 'breathe') return; ovStop(); Object.assign(o, { step: 'intro', note }); ovRender(); }
+function brDone() {
+  const o = ov; ovStop();
+  dlyChange(() => { const d = wday(); d.b = Math.min(99, (d.b || 0) + 1); });
+  Object.assign(o, { step: 'done', note: '' }); ovRender(); buzz([20, 40, 20]);
+}
+document.addEventListener('visibilitychange', () => {   // the camera and the breathing clock never run in the background
+  if (!ov) return;
+  if (document.hidden) {
+    if (ov.step === 'cam' && (ov.stream || !ov.ready)) { ovStop(); ov.paused = true; }
+    if (ov.kind === 'breathe' && ov.step === 'run') brStop('Paused. Start again when you are ready.');
+  } else if (ov.step === 'cam' && ov.paused) { ov.paused = false; camStart(); }
+});
+
+/* ---- ask friends: a voting link on cinolo.com (made by the Android app), or the photo itself */
+const POLL_ERR = {
+  network: "No connection. Couldn't reach the voting site.", timeout: "The voting site didn't answer. Try again in a bit.", rate_limited: 'Too many links today. Try again tomorrow.',
+  image_too_large: "That photo was too big to send.", bad_image: "That photo couldn't be sent.", busy: 'Still making your last link. Give it a sec.', missing: "That photo isn't on this phone anymore.",
+  not_found: 'This vote has closed.', other: "The voting site didn't answer right. Try again later.",
+};
+let fitReq = null;   // the link being made: {req, sel, title, timer}
+const pollReq = {};  // id -> timeout while a refresh is out
+function askSheet(pre = []) {
+  const list = S.fits.slice().reverse().slice(0, 12);
+  if (!list.length) { showNote('No fits yet', 'Snap one first, then ask your friends.', FIT_NOTE, 'Daily Fit'); return; }
+  let sel = pre.filter(id => list.some(f => f.id === id)).slice(0, 3);
+  if (!sel.length) sel = [list[0].id];
+  const link = fitBridge();
+  openSheet(`<h2>Ask friends</h2><p class="dim">Pick up to 3 fits. Friends tap the one you should wear. No sign-up.</p>
+    <div class="fpick" id="fpick">${list.map(f => `<button data-id="${f.id}" aria-label="Fit from ${fmtDate(f.day)}">${ph(f.id)}<em></em><small>${fmtDate(f.day, { weekday: 'short', day: 'numeric' })}</small></button>`).join('')}</div>
+    <label class="field"><span class="label">Question</span><input id="askT" maxlength="90" autocomplete="off"></label>
+    <p class="dim ask-st" id="askSt" aria-live="polite"></p>
+    <button class="go fitgo" id="askGo">${link ? 'Make voting link' : 'Share photo'}</button>
+    <p class="st-foot">${link ? 'Anyone with the link can see these photos for 7 days, then they delete themselves. Only send it to people you know.' : 'Voting links work in the LEVEL UP Android app. Here you can share the photo itself.'}</p>`, el => {
+    const T = el.querySelector('#askT'), go = el.querySelector('#askGo');
+    const paint = () => {
+      el.querySelectorAll('#fpick button').forEach(b => { const i = sel.indexOf(b.dataset.id); b.classList.toggle('on', i >= 0); b.setAttribute('aria-pressed', i >= 0); b.querySelector('em').textContent = i >= 0 && sel.length > 1 ? 'ABC'[i] : i >= 0 ? '\u2713' : ''; });
+      T.placeholder = sel.length > 1 ? 'Which fit should I wear?' : 'Should I wear this?'; go.disabled = !sel.length || !!fitReq;
+    };
+    el.querySelectorAll('#fpick button').forEach(b => b.onclick = () => {
+      const id = b.dataset.id;
+      if (sel.includes(id)) sel = sel.filter(x => x !== id); else if (sel.length >= 3) { Sound.nope(); el.querySelector('#askSt').textContent = 'Up to 3 fits.'; return; } else sel.push(id);
+      Sound.tap(); el.querySelector('#askSt').textContent = ''; paint();
+    });
+    paint(); hydrate(el);
+    go.onclick = async () => {
+      const title = T.value.replace(/\s+/g, ' ').trim() || T.placeholder, ids = sel.slice();
+      go.disabled = true; go.textContent = link ? 'Making your link...' : 'Getting it ready...';
+      if (!link) { await shareOut(ids, title); go.disabled = false; go.textContent = 'Share photo'; return; }
+      try {
+        const options = [];
+        for (const id of ids) { const r = await FitDB.get(id).catch(() => null); if (!r || !r.full) throw Object.assign(new Error(), { why: 'missing' }); options.push({ img: await b64(await small(r.full)), label: '' }); }
+        const req = uid(); fitReq = { req, sel: ids, title, timer: setTimeout(() => window.levelupFitPollMade(req, '{"ok":false,"error":"timeout"}'), 60000) };
+        LevelUpAndroid.createFitPoll(JSON.stringify({ req, title, options }));
+      } catch (e) { askFailed(ids, title, e.why || 'other'); }
+    };
+  });
+}
+// native: the voting link is made (or not)
+window.levelupFitPollMade = (req, json) => {
+  if (!fitReq || fitReq.req !== req) return;
+  const q = fitReq; clearTimeout(q.timer); fitReq = null;
+  let r; try { r = JSON.parse(json); } catch (e) { r = { ok: false, error: 'other' }; }
+  if (!r || !r.ok || !/^[A-Za-z0-9]{10}$/.test(r.id) || r.url !== POLL_URL + r.id) { askFailed(q.sel, q.title, (r && r.error) || 'other'); return; }
+  const p = { id: r.id, url: r.url, at: Date.now(), exp: Date.now() + 7 * 864e5, fits: q.sel, title: q.title, res: null };
+  S.polls = S.polls.filter(x => x.id !== p.id).concat(p).slice(-20); save();
+  renderPolls(); afterChange(); Sound.buy();
+  const open = $('sheetbg').classList.contains('open') && $('askGo');
+  if (!open) { showNote('Voting link ready', 'Find it under Friend votes on Daily.', FIT_NOTE, 'Daily Fit'); return; }
+  openSheet(`<h2>Link ready</h2><p class="dim">Send it to your friends. They tap the fit you should wear, no sign-up, and the votes show up on Daily.</p>
+    <div class="linkbox">${esc(p.url.replace('https://', ''))}</div><button class="go fitgo" id="lkSend">${SEND_ICON}Send link</button><button class="ghost" id="lkOk">Done</button>
+    <p class="st-foot">The link and its photos delete themselves after 7 days.</p>`, el => { el.querySelector('#lkSend').onclick = () => sendLink(p); el.querySelector('#lkOk').onclick = closeSheet; });
+  sendLink(p);
+};
+function sendLink(p) {
+  const text = `${p.title || 'Which fit should I wear?'} ${p.url}`;
+  let ok = false;
+  try { ok = window.LevelUpAndroid ? LevelUpAndroid.shareText(text) !== false : !!(navigator.share && (navigator.share({ text }).catch(() => {}), 1)); } catch (e) {}
+  if (!ok) showNote("Couldn't open sharing", p.url.replace('https://', ''), FIT_NOTE, 'Daily Fit');
+}
+function askFailed(ids, title, why) {
+  Sound.nope();
+  openSheet(`<h2>No link this time</h2><p>${esc(POLL_ERR[why] || POLL_ERR.other)}</p><p class="dim">You can still send the photo${ids.length > 1 ? 's in one picture' : ''} and ask in your chat.</p>
+    <button class="go fitgo" id="afShare">${SEND_ICON}Share the photo instead</button>${why === 'missing' ? '' : '<button class="ghost" id="afAgain">Try again</button>'}`, el => {
+    el.querySelector('#afShare').onclick = async () => { const b = el.querySelector('#afShare'); b.disabled = true; await shareOut(ids.filter(Boolean), title); b.disabled = false; };
+    const again = el.querySelector('#afAgain'); if (again) again.onclick = () => askSheet(ids);
+  });
+}
+// the photo (2-3 side by side) through Android's share sheet, or the browser's, or as a download
+async function shareOut(ids, title) {
+  let blob;
+  try { blob = await collage(ids); } catch (e) { Sound.nope(); showNote("Couldn't make the picture", POLL_ERR.missing, FIT_NOTE, 'Daily Fit'); return; }
+  try {
+    if (window.LevelUpAndroid && typeof LevelUpAndroid.sharePhoto === 'function') {
+      if (LevelUpAndroid.sharePhoto(await b64(blob), title) === false) throw new Error('refused');
+      return;
+    }
+    const file = new File([blob], `fit-${today()}.jpg`, { type: 'image/jpeg' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], text: title }).catch(() => {}); return; }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = file.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  } catch (e) { Sound.nope(); showNote("Couldn't open sharing", 'Try again in a moment.', FIT_NOTE, 'Daily Fit'); }
+}
+function pollRefresh(id, asked) {
+  const p = S.polls.find(x => x.id === id);
+  if (!p || pollReq[id] || !fitBridge() || p.gone || p.exp <= Date.now()) return;
+  pollReq[id] = setTimeout(() => window.levelupFitPollResult(id, '{"ok":false,"error":"timeout"}'), 40000);
+  p.asked = !!asked;
+  try { LevelUpAndroid.getFitPoll(id); } catch (e) { window.levelupFitPollResult(id, '{"ok":false,"error":"other"}'); return; }
+  renderPolls();
+}
+// native: a poll's votes (or why not)
+window.levelupFitPollResult = (id, json) => {
+  if (!pollReq[id]) return;
+  clearTimeout(pollReq[id]); delete pollReq[id];
+  const p = S.polls.find(x => x.id === id); if (!p) return;
+  let r; try { r = JSON.parse(json); } catch (e) { r = { ok: false, error: 'other' }; }
+  const v = r && r.ok && r.poll, okv = v && Array.isArray(v.choices) && Array.isArray(v.counts) && v.choices.length === v.counts.length && v.choices.length <= 3 && v.counts.every(c => Number.isInteger(c) && c >= 0);
+  if (okv) {
+    const before = p.res ? p.res.total : 0;
+    p.res = { choices: v.choices.map(c => String(c).slice(0, 60)), counts: v.counts, total: v.counts.reduce((a, c) => a + c, 0), at: Date.now() };
+    if (v.expires > Date.now()) p.exp = Math.min(v.expires, p.at + 8 * 864e5);
+    delete p.err; if (p.res.total > before && p.asked) Sound.check();
+  } else if (r && r.error === 'not_found') { p.gone = 1; delete p.err; }
+  else p.err = (r && r.error) in POLL_ERR ? r.error : 'other';
+  delete p.asked; save(); renderPolls();
+};
+
 function afterChange() { checkBoss(); checkAchievements(); renderCoins(); if ($('v-locker').classList.contains('on')) renderLocker(); }
 
 /* ------------------------------------------------------------------ nav + boot */
@@ -2187,6 +2878,7 @@ document.querySelectorAll('.nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === 'v-' + b.dataset.v));
   if (b.dataset.v === 'stats') renderStats();
   if (b.dataset.v === 'locker') renderLocker();
+  if (b.dataset.v === 'daily') { renderDaily(); S.polls.forEach(p => { if (!p.res || Date.now() - p.res.at > 120e3) pollRefresh(p.id); }); }
   Sound.tap(); scrollTo(0, 0);
 });
 // Android back button: returns true when it handled the press (so the app stays open)
@@ -2194,11 +2886,12 @@ window.levelupBack = () => {
   if (!$('pu').hidden) { puClose(); return true; }   // the push-up screen sits on top of everything, camera off
   if ($('rankup').classList.contains('open')) { nextMoment(); return true; }
   if ($('sheetbg').classList.contains('open')) { closeSheet(); return true; }
+  if (!$('ov').hidden) { ovClose(); return true; }   // the Daily camera, photo or breathing screen; camera off, nothing half-saved
   if (!$('wo').hidden) { $('wo').classList.contains('res') ? claimResults() : hideWorkout(); return true; }   // never discards
   if (!$('v-home').classList.contains('on')) { document.querySelector('.nav button[data-v=home]').click(); return true; }
   return false;   // app to background; a running workout persists
 };
-function renderAll() { renderCard(); renderScreen(); renderBoss(); renderHabits(); renderGoals(); renderTrain(); if ($('v-stats').classList.contains('on')) renderStats(); afterChange(); }
+function renderAll() { renderCard(); renderScreen(); renderToday(); renderBoss(); renderHabits(); renderGoals(); renderTrain(); renderDaily(); if ($('v-stats').classList.contains('on')) renderStats(); afterChange(); }
 renderBody(); renderAll(); save(); woBoot();
 setTimeout(() => { scrRefresh(true); scrPush(); renderScreen(); afterChange(); }, 0);
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}

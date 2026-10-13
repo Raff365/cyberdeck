@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
-    <!-- downloaded updates only -->
+    <!-- downloaded updates -->
     <cache-path name="updates" path="updates/" />
+    <!-- Daily Fit photos handed to Android's share sheet -->
+    <cache-path name="shares" path="shares/" />
 </paths>
