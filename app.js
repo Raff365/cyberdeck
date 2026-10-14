@@ -2125,6 +2125,7 @@ function scrRepaint() {
 }
 // native calls these: on every return to the app (from Settings or a limited app), and from the block screen
 window.levelupScreenTimeChanged = () => {
+  if (famOn()) { famRefresh(); famApply(); renderFam(); }
   if (hwOn()) { hwRefresh(); renderHw(); hwRepaint(); hwTicker(); }   // homework: back from Settings (the blocker) or an allowed app
   if (!scrOn()) return; scrRefresh(true); renderScreen(); scrRepaint(); afterChange();
 };
@@ -2513,9 +2514,9 @@ function grab(src, max) {   // a canvas copy, longest edge <= max
 const jpeg = (c, q) => new Promise((res, rej) => c.toBlob(b => (b ? res(b) : rej(new Error('encode failed'))), 'image/jpeg', q));
 async function shots(src) { const c = grab(src, 1080); return { full: await jpeg(c, 0.86), thumb: await jpeg(grab(c, 360), 0.78) }; }
 // the server takes <= 400 KB a photo: step the quality down, then the size
-async function small(blob, cap = 380 * 1024) {
+async function small(blob, cap = 380 * 1024, start = 900) {
   const im = await loadImg(blob);
-  for (let max = 900; ; max = Math.round(max * 0.8)) {
+  for (let max = start; ; max = Math.round(max * 0.8)) {
     const c = grab(im, max);
     for (const q of [0.8, 0.7, 0.6]) { const b = await jpeg(c, q); if (b.size <= cap || max < 300) return b; }
   }
@@ -4190,7 +4191,8 @@ function pmHTML() {
   const ctl = (id, label, val) => `<button class="setrow" data-pm="${id}"><span class="nm">${label}</span>${val != null ? `<span class="val">${esc(val)}</span>` : ''}</button>`;
   const ctls = (D.scrOn ? ctl('ctl-scr', 'Screen time limit', e && scrLim(e) ? `${limName(e.limit)} · ${e.apps.length} ${e.apps.length === 1 ? 'app' : 'apps'}` : 'Off') : '')
     + ctl('ctl-hw', 'Homework settings', cfg && cfg.set ? `${cfg.min} min${cfg.on ? ' · scheduled' : ''}` : 'Set up')
-    + ctl('ctl-ideas', 'Bored ideas', `${S.irl.ideas.length}`) + ctl('ctl-bonus', 'Bonus coins', `${coins().toLocaleString()} coins`) + ctl('ctl-pin', 'Change PIN', null);
+    + ctl('ctl-ideas', 'Bored ideas', `${S.irl.ideas.length}`) + ctl('ctl-bonus', 'Bonus coins', `${coins().toLocaleString()} coins`)
+    + (famOn() ? ctl('ctl-fam', 'Family link', famLinked() ? (fam.st.photos ? 'On · photos' : 'On') : 'Off') : '') + ctl('ctl-pin', 'Change PIN', null);
   return `<div class="pu-top"><button class="pu-x" data-pm="close" aria-label="Lock and close Parent mode">${X_ICON}</button><div class="mid"><b>Parent mode</b><span>${esc(name)} · ${fmtDate(t, { weekday: 'short', day: 'numeric', month: 'short' })}</span></div><button class="pu-x pm-rep" data-pm="report" aria-label="Send a report">${SEND_ICON}</button></div>
     <div class="pm-body">
       <div class="pm-h first"><h2>Today</h2><span>as of ${clockAt(Date.now())}</span></div>
@@ -4288,6 +4290,7 @@ $('pmIn').onclick = async e => {
   else if (a === 'ctl-hw') { hwRefresh(); if (hw.st && hw.st.cfg.set) hwParentSheet(); else hwSetup(); }
   else if (a === 'ctl-ideas') ideasSheet();
   else if (a === 'ctl-bonus') pmBonusSheet();
+  else if (a === 'ctl-fam') famSheet();
   else if (a === 'ctl-pin') { if (await pinAsk({ mode: 'change', title: 'Change PIN', sub: '' }) && pm) { pm.nat = pm.at = Date.now(); hwRefresh(); pmRender(); } }
 };
 
@@ -4305,8 +4308,8 @@ function pmCheck(id) {
 }
 
 /* bonus coins: give some for something done well, or take some back. Up to PM.CAP at a time, never below 0 */
-function bonusAdd(n, w) {
-  S.bonus.push({ id: uid() + uid(), at: Date.now(), n, w });
+function bonusAdd(n, w, id) {   // id: a Family link request's own (so it's done once)
+  S.bonus.push({ id: id || uid() + uid(), at: Date.now(), n, w });
   while (S.bonus.length > PM.KEEP) S.bank += S.bonus.shift().n;   // the oldest fold into the bank, so the total never changes
   save(); renderCoins(); afterChange();
 }
@@ -4580,7 +4583,342 @@ async function pmRepSend() {
 $('pmOpen').hidden = $('pmKey').hidden = !pmOn();
 $('pmOpen').onclick = pmOpen; $('pmKey').onclick = pmOpen;
 
-function afterChange() { checkBoss(); checkAchievements(); renderCoins(); if ($('v-locker').classList.contains('on')) renderLocker(); }
+/* ------------------------------------------------------------------ FAMILY LINK: Parent mode, live on a parent's own phone */
+// Set up in Parent mode (the PIN). The family's own server (family-server/: a Cloudflare Worker) relays Parent mode's
+// numbers to a parent's phone (a web app on an iPhone's Home Screen) and a few requests back. Native (FamilySync.java)
+// does the talking, also in the background; this side builds the snapshot from what Parent mode shows, hands over
+// homework photos when a parent switched them on, applies the requests it owns (bonus coins, ideas) and keeps its copy
+// of today's limit in step with one a parent changed. Whenever it's on, Home and Stats say so: nothing about it is hidden.
+const famOn = () => pmOn() && typeof LevelUpAndroid.familyStatus === 'function';
+const FAM = { URL: 'https://levelup-family.<subdomain>.workers.dev', EVERY: 20e3, PH_DAYS: 30 };
+var fam = { st: null, n: 0, wait: {}, pushT: 0, pushAt: 0, appsAt: 0, phTry: new Set(), dev: null, busy: '' };   // var: renderAll/afterChange may run before this line
+function famRefresh() { fam.st = famOn() ? hwCall('familyStatus') : null; return fam.st; }
+const famLinked = () => !!(fam && fam.st && fam.st.on);
+// native answers network calls later: window.levelupFamily(req, json)
+function famCall(name, ...args) {
+  return new Promise(res => {
+    const req = `fam${++fam.n}`, t = setTimeout(() => { if (fam.wait[req]) { delete fam.wait[req]; res({ ok: false, why: 'timeout' }); } }, 40e3);
+    fam.wait[req] = o => { clearTimeout(t); res(o); };
+    try { LevelUpAndroid[name](req, ...args); } catch (e) { delete fam.wait[req]; clearTimeout(t); res({ ok: false, why: 'failed' }); }
+  });
+}
+window.levelupFamily = (req, json) => {
+  const f = fam.wait[req]; if (!f) return;
+  delete fam.wait[req];
+  let o; try { o = JSON.parse(json); } catch (e) { o = { ok: false, why: 'failed' }; }
+  f(o && typeof o === 'object' ? o : { ok: false, why: 'failed' });
+};
+// native: a request arrived, or the link went away (unlinked elsewhere)
+window.levelupFamilyChanged = () => {
+  famRefresh(); famApply(); renderFam();
+  if (hwOn()) { hwRefresh(); renderHw(); hwRepaint(); }
+  if (scrOn()) { scrRefresh(true); renderScreen(); scrRepaint(); }
+  if (pm) pmRender();
+  famSheetPaint();
+};
+
+/* the "Family link on" line, on Home and in Stats: always there while it's on */
+function renderFam() {
+  const on = famLinked(), ph = on && fam.st.photos;
+  for (const id of ['famHome', 'famStats']) {
+    const el = $(id); if (!el) continue;
+    el.hidden = !on;
+    if (on) el.innerHTML = `${FAM_ICON}<span><b>Family link on</b> · shares screen time &amp; homework${ph ? ' (with photos)' : ''} with your parents</span>`;
+  }
+}
+const FAM_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 11a3.5 3.5 0 110-7 3.5 3.5 0 010 7zm8.5 0a3 3 0 110-6 3 3 0 010 6zM1.5 20c0-3.6 2.9-6.5 6.5-6.5s6.5 2.9 6.5 6.5zm14.3 0c0-2-.6-3.9-1.8-5.4a5.4 5.4 0 018 4.7v.7z" fill="currentColor"/></svg>';
+function famInfo() {
+  Sound.tap();
+  const ph = fam.st && fam.st.photos;
+  openSheet(`<h2>Family link</h2><p class="dim">Your parents see what Parent mode shows, on their own phones, and get a notification for a few things.</p>
+    <span class="label fam-lab">What they see</span><ul class="fam-list"><li>Screen time: minutes a day and your most used apps' names</li><li>Homework: when it ran and how it ended${ph ? ', and its photos' : ''}</li><li>Phone-free minutes, check-ins, quests, coins and push-up unlocks</li><li>When the blocker is switched off, or the limit runs out</li></ul>
+    <span class="label fam-lab">Never</span><p class="dim fam-never">Your messages, what you look at, where you are, your contacts or what you type.</p>
+    <p class="rule-note">They can also end or start homework, give or take back bonus coins, change today's limit and add a Bored idea. Only a parent can switch Family link off, in Parent mode.</p>
+    <button class="ghost" data-fi="ok">Got it</button>`, el => { el.querySelector('[data-fi=ok]').onclick = closeSheet; });
+}
+
+/* the snapshot: Parent mode's numbers, nothing more (the server rebuilds it field by field too) */
+function famSnap() {
+  const D = pmData(), now = Date.now(), s = hw.st && hw.st.s, cfg = hw.st && hw.st.cfg, cur = scrAt(D.t), nx = scrNext();
+  return { v: 1, at: now, day: D.t, name: pmName(),
+    scr: { on: D.scrOn, meas: D.meas, lim: D.lim, used: D.used, total: D.total, top: D.top.map(a => ({ n: a.name, m: a.min })) },
+    hw: { k: D.hwS.k, v: D.hwS.v, sub: D.hwS.sub, next: (hw.st && hw.st.next) || 0, run: s ? { start: s.start, left: hwLeft(), off: !!s.off } : null,
+      cfg: cfg ? { set: !!cfg.set, on: !!cfg.on, min: cfg.min, days: cfg.days, at: cfg.at, rule: cfg.rule } : { set: false } },
+    pf: D.pf, pfv: D.pfv, ck: D.ck, ckN: DLY.length, ckd: D.ckd, qd: D.qd, qn: D.qn, ulT: D.ulT,
+    week: { k0: D.k0, days: D.days.map(x => ({ k: x.k, u: x.u, l: x.l, ok: x.ok, fin: x.fin, pf: x.pf, ck: x.ck })), under: D.under, limDays: D.limDays, hwN: D.hwN, hwM: D.hwM, hwP: D.hwP,
+      ulW: D.ulW, wo: D.wo, woM: D.woM, pfW: D.pfW, ckDays: D.ckDays, ckNeed: CHECKIN_N },
+    att: D.att.slice(0, 40).map(a => ({ t: a.t || 0, now: !!a.now, day: a.day || '', k: a.k, hd: a.hd, sub: a.sub || '' })),
+    log: S.hw.log.filter(e => e.t1 >= now - FAM.PH_DAYS * 864e5).slice(-40).map(e => ({ id: e.id, t0: e.t0, t1: e.t1, m: e.m, how: e.how, why: e.why, n: e.n || '', ph: !!e.ph, pc: !!e.pc, bad: hwBad(e), tp: e.tp.slice(0, 10) })),
+    coins: coins(), bonus: S.bonus.slice(-10).reverse().map(b => ({ at: b.at, n: b.n, w: b.w })),
+    plan: { lim: scrLim(cur), apps: cur ? cur.apps.length : 0, next: nx ? { from: nx.from, lim: scrLim(nx) } : null }, ideas: S.irl.ideas.length };
+}
+// after anything changes (coalesced, at most every 20 s): the snapshot goes to native, which syncs it
+function famPush(now) {
+  if (!famLinked()) return;
+  clearTimeout(fam.pushT);
+  const wait = now ? 0 : Math.max(1500, FAM.EVERY - (Date.now() - fam.pushAt));
+  fam.pushT = setTimeout(famSend, wait);
+}
+function famSend() {
+  if (!famLinked() || document.hidden) return;
+  fam.pushAt = Date.now();
+  try {
+    if (scrOn() && (!scr.apps || Date.now() - fam.appsAt > 10 * 60e3)) { scrLoadApps(); fam.appsAt = Date.now(); }   // "most used today"
+    LevelUpAndroid.familySnapshot(JSON.stringify(famSnap()));
+  } catch (e) {}
+  famPhotos();
+}
+// homework photos, only while a parent has them switched on: the last 30 days', each made <= 380 KB, a few at a time
+async function famPhotos() {
+  if (!famLinked() || !fam.st.photos || fam.phBusy) return;
+  fam.phBusy = true;
+  try {
+    let have = []; try { have = JSON.parse(LevelUpAndroid.familyHave() || '[]'); } catch (e) {}
+    const from = Date.now() - FAM.PH_DAYS * 864e5;
+    const todo = S.hw.log.filter(e => e.ph && e.t1 >= from && !have.includes(e.id) && !fam.phTry.has(e.id)).slice(-3);
+    for (const e of todo) {
+      fam.phTry.add(e.id);
+      const r = await FitDB.get(e.ph).catch(() => null);
+      if (!r || !(r.full instanceof Blob)) continue;
+      const pic = await small(r.full, 380 * 1024, 1280).catch(() => null);
+      if (pic && famLinked() && fam.st.photos) LevelUpAndroid.familyPhoto(e.id, await b64(pic));
+    }
+  } catch (e) {} finally { fam.phBusy = false; }
+}
+
+/* requests from a parent's phone that this side owns: bonus coins, ideas; and today's limit, mirrored */
+function famApply() {
+  if (!famOn()) return;
+  let list = [];
+  try { list = JSON.parse(LevelUpAndroid.familyTake() || '[]'); } catch (e) { return; }
+  if (!Array.isArray(list) || !list.length) return;
+  const done = (id, ok, why = '') => { try { LevelUpAndroid.familyDone(id, ok, why); } catch (e) {} };
+  let changed = false;
+  for (const c of list) {
+    if (!c || typeof c.id !== 'string' || !/^[a-z0-9]{16}$/.test(c.id) || !c.args) continue;
+    const a = c.args;
+    if (c.kind === 'limit' && c.mirror) {   // native did it already: the plan here follows, so the next push matches
+      const cur = scrCur();
+      if (cur && SCR_LIMITS.includes(a.limit)) { cur.limit = a.limit; save(); changed = true; }
+      done(c.id, true);
+      showNote(a.mode === 'tighten' ? `Today's limit: ${limName(a.limit)}` : `${limName(a.limit)} today`, a.mode === 'tighten' ? 'A parent tightened it, just for today.' : 'A parent allowed more time, just for today.', HOURGLASS, 'Parent');
+    } else if (c.kind === 'coins') {
+      const n = a.n, w = typeof a.w === 'string' ? a.w.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, PM.NOTE) : '';
+      if (S.bonus.some(b => b.id === c.id)) done(c.id, true);   // done before (the ack got lost)
+      else if (!Number.isInteger(n) || !n || Math.abs(n) > PM.CAP) done(c.id, false, 'bad');
+      else if (n < 0 && -n > coins()) done(c.id, false, 'nocoins');
+      else {
+        bonusAdd(n, w, c.id); changed = true; done(c.id, true);
+        if (n > 0) { Sound.buy(); showNote(`+${n} coins from a parent`, w || 'A bonus, sent from their phone', COIN_SM, 'Parent'); }
+        else showNote(`${-n} coins taken back`, w || 'By a parent, from their phone', COIN_SM, 'Parent');
+      }
+    } else if (c.kind === 'idea') {
+      const n = typeof a.n === 'string' ? a.n.replace(/\s+/g, ' ').trim().slice(0, 40) : '';
+      if (S.irl.ideas.some(i => i.id === c.id)) done(c.id, true);
+      else if (!n || !IRL_MINS.includes(a.min) || !IRL_CATS.some(k => k[0] === a.cat)) done(c.id, false, 'bad');
+      else if (S.irl.ideas.length >= IRL.IDEAS) done(c.id, false, 'full');
+      else {
+        S.irl.ideas.push({ id: c.id, n, min: a.min, cat: a.cat }); save(); changed = true; done(c.id, true);
+        showNote('A new idea from a parent', n, FAM_ICON, 'Parent');
+        if (pd && pd.step === 'deal') pdRender();
+      }
+    } else done(c.id, false, 'bad');
+  }
+  if (changed) { renderScreen(); scrRepaint(); renderAll(); famPush(true); }
+}
+
+/* a tiny QR code (byte mode, error correction M, versions 1-10): the pairing link as an SVG */
+const QR = (() => {
+  const ECC = [0, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26], BLK = [0, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5];
+  const raw = v => { let r = (16 * v + 128) * v + 64; if (v >= 2) { const n = Math.floor(v / 7) + 2; r -= (25 * n - 10) * n - 55; if (v >= 7) r -= 36; } return r; };
+  const dataCw = v => Math.floor(raw(v) / 8) - ECC[v] * BLK[v];
+  const mul = (x, y) => { let z = 0; for (let i = 7; i >= 0; i--) { z = (z << 1) ^ ((z >>> 7) * 0x11d); z ^= ((y >>> i) & 1) * x; } return z & 255; };
+  const divisor = d => { const r = new Array(d).fill(0); r[d - 1] = 1; let root = 1; for (let i = 0; i < d; i++) { for (let j = 0; j < d; j++) { r[j] = mul(r[j], root); if (j + 1 < d) r[j] ^= r[j + 1]; } root = mul(root, 2); } return r; };
+  const rem = (data, div) => { const r = new Array(div.length).fill(0); for (const b of data) { const f = b ^ r.shift(); r.push(0); div.forEach((c, i) => { r[i] ^= mul(c, f); }); } return r; };
+  const align = (v, size) => { if (v === 1) return []; const n = Math.floor(v / 7) + 2, step = Math.ceil((v * 4 + 4) / (n * 2 - 2)) * 2, out = [6]; for (let p = size - 7; out.length < n; p -= step) out.splice(1, 0, p); return out; };
+  return text => {
+    const bytes = [...new TextEncoder().encode(text)];
+    let v = 1;
+    while (v <= 10 && 4 + (v < 10 ? 8 : 16) + bytes.length * 8 > dataCw(v) * 8) v++;
+    if (v > 10) return null;
+    // the bits: mode 0100 (bytes), the count, the bytes, a terminator, padding
+    const bits = [], put = (val, n) => { for (let i = n - 1; i >= 0; i--) bits.push((val >>> i) & 1); };
+    put(4, 4); put(bytes.length, v < 10 ? 8 : 16); for (const b of bytes) put(b, 8);
+    const cap = dataCw(v) * 8;
+    put(0, Math.min(4, cap - bits.length)); put(0, (8 - bits.length % 8) % 8);
+    for (let p = 0xec; bits.length < cap; p ^= 0xec ^ 0x11) put(p, 8);
+    const data = []; for (let i = 0; i < bits.length; i += 8) data.push(bits.slice(i, i + 8).reduce((a, b) => (a << 1) | b, 0));
+    // error correction per block, interleaved
+    const nb = BLK[v], el = ECC[v], rawCw = Math.floor(raw(v) / 8), nShort = nb - rawCw % nb, shortLen = Math.floor(rawCw / nb), div = divisor(el), blocks = [];
+    for (let i = 0, k = 0; i < nb; i++) { const d = data.slice(k, k + shortLen - el + (i < nShort ? 0 : 1)); k += d.length; const e = rem(d, div); if (i < nShort) d.push(0); blocks.push(d.concat(e)); }
+    const cw = []; for (let i = 0; i < blocks[0].length; i++) blocks.forEach((b, j) => { if (i !== shortLen - el || j >= nShort) cw.push(b[i]); });
+    // the grid: function patterns first
+    const size = v * 4 + 17, M = Array.from({ length: size }, () => new Array(size).fill(false)), F = Array.from({ length: size }, () => new Array(size).fill(false));
+    const set = (x, y, d) => { M[y][x] = d; F[y][x] = true; };
+    for (let i = 0; i < size; i++) { set(6, i, i % 2 === 0); set(i, 6, i % 2 === 0); }
+    for (const [cx, cy] of [[3, 3], [size - 4, 3], [3, size - 4]]) for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
+      const x = cx + dx, y = cy + dy, d = Math.max(Math.abs(dx), Math.abs(dy));
+      if (x >= 0 && x < size && y >= 0 && y < size) set(x, y, d !== 2 && d !== 4);
+    }
+    const ap = align(v, size), last = ap.length - 1;
+    ap.forEach((ax, i) => ap.forEach((ay, j) => { if ((i === 0 && j === 0) || (i === 0 && j === last) || (i === last && j === 0)) return; for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) set(ax + dx, ay + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1); }));
+    const format = mask => {
+      const d = (0 << 3) | mask; let r = d; for (let i = 0; i < 10; i++) r = (r << 1) ^ ((r >>> 9) * 0x537);
+      const b = ((d << 10) | r) ^ 0x5412, bit = i => ((b >>> i) & 1) === 1;
+      for (let i = 0; i <= 5; i++) set(8, i, bit(i));
+      set(8, 7, bit(6)); set(8, 8, bit(7)); set(7, 8, bit(8));
+      for (let i = 9; i < 15; i++) set(14 - i, 8, bit(i));
+      for (let i = 0; i < 8; i++) set(size - 1 - i, 8, bit(i));
+      for (let i = 8; i < 15; i++) set(8, size - 15 + i, bit(i));
+      set(8, size - 8, true);
+    };
+    format(0);
+    if (v >= 7) {
+      let r = v; for (let i = 0; i < 12; i++) r = (r << 1) ^ ((r >>> 11) * 0x1f25);
+      const b = (v << 12) | r;
+      for (let i = 0; i < 18; i++) { const d = ((b >>> i) & 1) === 1, a = size - 11 + i % 3, c = Math.floor(i / 3); set(a, c, d); set(c, a, d); }
+    }
+    // the data, in the zigzag
+    let i = 0;
+    for (let right = size - 1; right >= 1; right -= 2) {
+      if (right === 6) right = 5;
+      for (let vert = 0; vert < size; vert++) for (let j = 0; j < 2; j++) {
+        const x = right - j, up = ((right + 1) & 2) === 0, y = up ? size - 1 - vert : vert;
+        if (!F[y][x] && i < cw.length * 8) { M[y][x] = ((cw[i >>> 3] >>> (7 - (i & 7))) & 1) === 1; i++; }
+      }
+    }
+    // the mask with the lowest penalty (runs, 2x2 blocks, balance)
+    const MASK = [(x, y) => (x + y) % 2 === 0, (x, y) => y % 2 === 0, x => x % 3 === 0, (x, y) => (x + y) % 3 === 0, (x, y) => (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0,
+      (x, y) => (x * y) % 2 + (x * y) % 3 === 0, (x, y) => ((x * y) % 2 + (x * y) % 3) % 2 === 0, (x, y) => (((x + y) % 2) + (x * y) % 3) % 2 === 0];
+    const flip = m => { for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (!F[y][x] && MASK[m](x, y)) M[y][x] = !M[y][x]; };
+    const penalty = () => {
+      let p = 0, dark = 0;
+      for (let a = 0; a < 2; a++) for (let k = 0; k < size; k++) { let run = 1; for (let l = 1; l < size; l++) { const c = a ? M[l][k] : M[k][l], d = a ? M[l - 1][k] : M[k][l - 1]; if (c === d) { run++; if (run === 5) p += 3; else if (run > 5) p++; } else run = 1; } }
+      for (let y = 0; y < size - 1; y++) for (let x = 0; x < size - 1; x++) { const c = M[y][x]; if (c === M[y][x + 1] && c === M[y + 1][x] && c === M[y + 1][x + 1]) p += 3; }
+      for (const row of M) for (const c of row) if (c) dark++;
+      return p + Math.floor(Math.abs(dark * 20 - size * size * 10) / (size * size)) * 10;
+    };
+    let best = 0, bestP = Infinity;
+    for (let m = 0; m < 8; m++) { flip(m); format(m); const p = penalty(); if (p < bestP) { bestP = p; best = m; } flip(m); }
+    flip(best); format(best);
+    let path = '';
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (M[y][x]) path += `M${x + 4} ${y + 4}h1v1h-1z`;
+    const n = size + 8;
+    return `<svg class="fam-qr" viewBox="0 0 ${n} ${n}" role="img" aria-label="QR code for the pairing link" shape-rendering="crispEdges"><rect width="${n}" height="${n}" fill="#fff"/><path d="${path}" fill="#000"/></svg>`;
+  };
+})();
+
+/* the Family link sheet (Parent mode) */
+const FAM_WHY = { url: "That isn't a server address. It starts with https://", network: "Couldn't reach the server. Check the address and the connection.", busy: 'The server is busy. Try again in a minute.',
+  server: "That address answers, but it isn't a LEVEL UP family server.", unlinked: 'The server no longer knows this phone.', timeout: 'No answer from the server. Try again.', reply: "The server's answer didn't make sense.", failed: "Couldn't do that. Try again." };
+let famS = null;   // the open sheet's state: {url, err, msg}
+function famSheet() {
+  if (!pm) return;
+  famRefresh();
+  famS = { url: (fam.st && fam.st.url) || FAM.URL, err: '', msg: '' };
+  fam.dev = null;
+  openSheet(`<div data-fam>${famSheetHTML()}</div>`, el => { el.onclick = famSheetClick; el.oninput = e => { if (e.target.id === 'famUrl') { famS.url = e.target.value; const g = el.querySelector('[data-f=setup]'); if (g) g.disabled = !famUrlOk(famS.url) || !!fam.busy; } }; });
+  sheetOnClose = () => { famS = null; };
+  if (famLinked()) famDevices();
+}
+const famUrlOk = u => /^https:\/\/[a-z0-9.-]+\.[a-z]{2,}\/?$/i.test(String(u || '').trim()) || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/.test(String(u || '').trim());
+function famSheetHTML() {
+  const st = fam.st || {}, name = esc(pmName()), busy = fam.busy;
+  if (!st.on) {
+    return `<h2>Family link</h2>${st.lastErr === 'unlinked' ? '<p class="pm-err fam-err">Family link was switched off: the server no longer knows this phone.</p>' : ''}<p class="dim">Parent mode on a parent's own phone (an iPhone too), live: screen time, homework, what's worth a look, with notifications. From there they can end or start homework, give bonus coins, change today's limit and add a Bored idea.</p>
+      <span class="label fam-lab">What's shared</span><ul class="fam-list"><li>Parent mode's numbers: minutes, top apps' names, homework times, phone-free minutes, check-ins, coins, unlocks</li><li>Homework photos only if you switch them on (off to start with)</li><li>Never messages, browsing, location, contacts or typing</li></ul>
+      <p class="rule-note">${name} sees "Family link on" on Home and in Stats the whole time it's on. The server deletes everything older than 30 days.</p>
+      <label class="field"><span class="label">Your family's server</span><input id="famUrl" type="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" value="${esc(famS.url)}" placeholder="${esc(FAM.URL)}"></label>
+      <p class="rule-note">The address of your own LEVEL UP family server (family-server/ in the LEVEL UP code, on Cloudflare). It ends in workers.dev.</p>
+      ${famS.err ? `<p class="pm-err fam-err" role="alert">${esc(famS.err)}</p>` : ''}
+      <button class="go fam-go" data-f="setup"${famUrlOk(famS.url) && !busy ? '' : ' disabled'}>${busy === 'setup' ? 'Linking…' : 'Set up Family link'}</button>`;
+  }
+  const code = st.code && st.codeExp > Date.now() ? st : null, mins = code ? Math.max(1, Math.ceil((code.codeExp - Date.now()) / 60e3)) : 0;
+  const dev = fam.dev, sync = st.lastSync ? `Last sync ${pmWhen(st.lastSync)}` : 'Not synced yet';
+  const err = st.lastErr === 'network' ? ' · no connection' : st.lastErr && st.lastErr !== '' ? ' · ' + esc(st.lastErr) : '';
+  return `<h2>Family link</h2><p class="dim">On. Parent mode's numbers go to <b class="fam-url">${esc(st.url.replace(/^https?:\/\//, ''))}</b>; ${name} sees "Family link on".</p>
+    <div class="fam-sync"><span>${esc(sync)}${err}</span><button class="act" data-f="sync">Sync now</button></div>
+    <span class="label fam-lab">Add a parent's phone</span>
+    ${code ? `<div class="fam-code"><div class="fam-qrw">${QR(code.link) || ''}</div><div class="fam-cd"><b aria-label="Code ${esc(code.code.split('').join(' '))}">${esc(code.code.slice(0, 4))}-${esc(code.code.slice(4))}</b><small>Works once, for ${mins} more min</small></div></div>
+      <p class="rule-note">On the parent's phone: scan it, or open the link, add it to the Home Screen, and type the code there.</p>
+      <div class="fam-two"><button class="go fam-go" data-f="share">Share the link</button><button class="ghost" data-f="code"${busy ? ' disabled' : ''}>New code</button></div>`
+      : `<p class="rule-note">Makes a code that works once, for 10 minutes. Up to 4 parent phones.</p><button class="go fam-go" data-f="code"${busy ? ' disabled' : ''}>${busy === 'code' ? 'Making a code…' : 'Make a code'}</button>`}
+    ${famS.err ? `<p class="pm-err fam-err" role="alert">${esc(famS.err)}</p>` : ''}
+    <span class="label fam-lab">Homework photos</span>
+    <div class="st-blk fam-ph"><div><b class="${st.photos ? '' : 'off'}">${st.photos ? 'Shared' : 'Not shared'}</b><small>${st.photos ? 'Parents see each homework photo for 30 days' : 'Parents see the times and how it ended, not the photo'}</small></div><button class="act" role="switch" aria-checked="${!!st.photos}" data-f="photos">${st.photos ? 'Stop sharing' : 'Share them'}</button></div>
+    <span class="label fam-lab">Parent phones${dev ? ` · ${dev.length} of 4` : ''}</span>
+    ${!dev ? `<p class="dim fam-dev-l">${busy === 'dev' ? 'Loading…' : 'Couldn\'t load them.'}</p>` : dev.length ? `<div class="fam-devs">${dev.map(d => `<div class="fam-dev"><span class="grow"><b>${esc(d.name)}</b><small>Linked ${esc(pmWhen(d.created))}${d.seen ? ` · seen ${esc(pmWhen(d.seen))}` : ''}</small></span><button class="act quiet" data-f="rm" data-id="${esc(d.id)}" aria-label="Remove ${esc(d.name)}">Remove</button></div>`).join('')}</div>` : '<p class="dim fam-dev-l">None yet.</p>'}
+    ${famS.msg ? `<p class="rule-note" role="status">${esc(famS.msg)}</p>` : ''}
+    <button class="ghost fam-off" data-f="unlink"${busy ? ' disabled' : ''}>Unlink &amp; delete</button>
+    <p class="rule-note">Deletes everything on the server and unlinks every parent phone.</p>`;
+}
+function famSheetPaint() {
+  const box = $('sheet').querySelector('[data-fam]'); if (!box || !famS || !$('sheetbg').classList.contains('open')) return;
+  const top = $('sheet').scrollTop, f = document.activeElement && document.activeElement.id;
+  box.innerHTML = famSheetHTML().replace('<h2>', '<h2 id="sheetTitle">'); $('sheet').scrollTop = top;
+  if (f === 'famUrl' && $('famUrl')) $('famUrl').focus({ preventScroll: true });
+}
+async function famDevices() {
+  fam.busy = 'dev'; famSheetPaint();
+  const r = await famCall('familyDevices');
+  fam.busy = ''; fam.dev = r.ok && Array.isArray(r.devices) ? r.devices : null;
+  if (r.why === 'pin') { pmLock('idle'); return; }
+  famRefresh(); famSheetPaint();
+}
+async function famSheetClick(e) {
+  const b = e.target.closest('[data-f]'); if (!b || b.disabled || !pm || !famS) return;
+  const a = b.dataset.f; Sound.tap();
+  const fail = r => { if (r.why === 'pin') { pmLock('idle'); return true; } if (!r.ok) { Sound.nope(); famS.err = FAM_WHY[r.why] || FAM_WHY.failed; famRefresh(); famSheetPaint(); return true; } famS.err = ''; return false; };
+  if (a === 'setup') {
+    if (!famUrlOk(famS.url) || fam.busy) return;
+    fam.busy = 'setup'; famS.err = ''; famSheetPaint();
+    const r = await famCall('familySetup', famS.url.trim().replace(/\/+$/, ''), pmName());
+    fam.busy = '';
+    if (fail(r)) return;
+    famRefresh(); renderFam(); Sound.check(); buzz(12);
+    famSheetPaint(); famDevices(); famPush(true);
+  } else if (a === 'code') {
+    fam.busy = 'code'; famSheetPaint();
+    const r = await famCall('familyCode');
+    fam.busy = '';
+    if (fail(r)) return;
+    famRefresh(); famSheetPaint();
+  } else if (a === 'share') {
+    const st = fam.st; if (!st || !st.link) return;
+    const ok = typeof LevelUpAndroid.shareText === 'function' && LevelUpAndroid.shareText(`Link your phone to ${pmName()}'s LEVEL UP: ${st.link}\nOr type the code ${st.code.slice(0, 4)}-${st.code.slice(4)}. It works once, for 10 minutes. On an iPhone, add the page to your Home Screen first.`) !== false;
+    if (!ok) { Sound.nope(); famS.err = "Couldn't open sharing."; famSheetPaint(); }
+  } else if (a === 'sync') {
+    try { LevelUpAndroid.familySync(); } catch (x) {}
+    famPush(true); famS.msg = 'Syncing…'; famSheetPaint();
+    setTimeout(() => { if (famS) { famS.msg = ''; famRefresh(); famSheetPaint(); } }, 4000);
+  } else if (a === 'photos') {
+    const on = !(fam.st && fam.st.photos);
+    if (on && !confirm(`Share homework photos with your parents' phones? Each one stays on your family's server for 30 days.`)) return;
+    let ok = false; try { ok = LevelUpAndroid.familyPhotos(on) === true; } catch (x) {}
+    if (!ok) { pmLock('idle'); return; }
+    fam.phTry.clear(); famRefresh(); renderFam(); famSheetPaint(); if (on) famPush(true);
+  } else if (a === 'rm') {
+    const d = (fam.dev || []).find(x => x.id === b.dataset.id); if (!d || !confirm(`Remove ${d.name}? It stops seeing ${pmName()}'s day straight away.`)) return;
+    fam.busy = 'dev'; famSheetPaint();
+    const r = await famCall('familyRevoke', d.id);
+    fam.busy = '';
+    if (fail(r)) return;
+    fam.dev = r.devices; famSheetPaint();
+  } else if (a === 'unlink') {
+    if (!confirm('Unlink & delete? Everything on your family server is deleted and every parent phone is unlinked.')) return;
+    fam.busy = 'unlink'; famSheetPaint();
+    let r = await famCall('familyUnlink', false);
+    if (!r.ok && r.why === 'network' && confirm("Couldn't reach the server. Unlink this phone anyway? The server deletes what it has within 30 days.")) r = await famCall('familyUnlink', true);
+    fam.busy = '';
+    if (fail(r)) return;
+    fam.dev = null; famRefresh(); renderFam(); Sound.uncheck();
+    showNote('Family link off', r.local ? "Unlinked here. The server couldn't be reached." : 'Everything on the server is deleted.', FAM_ICON, 'Parent');
+    famSheetPaint();
+  }
+}
+for (const id of ['famHome', 'famStats']) if ($(id)) $(id).onclick = famInfo;
+
+function afterChange() { checkBoss(); checkAchievements(); renderCoins(); if ($('v-locker').classList.contains('on')) renderLocker(); famPush(); }
 
 /* ------------------------------------------------------------------ nav + boot */
 document.querySelectorAll('.nav button').forEach(b => b.onclick = () => {
@@ -4605,9 +4943,10 @@ window.levelupBack = () => {
   if (!$('v-home').classList.contains('on')) { document.querySelector('.nav button[data-v=home]').click(); return true; }
   return false;   // app to background; a running workout persists
 };
-function renderAll() { renderCard(); renderBored(); renderHw(); renderScreen(); renderToday(); renderBoss(); renderHabits(); renderGoals(); renderTrain(); renderDaily(); if ($('v-stats').classList.contains('on')) renderStats(); afterChange(); }
+function renderAll() { renderFam(); renderCard(); renderBored(); renderHw(); renderScreen(); renderToday(); renderBoss(); renderHabits(); renderGoals(); renderTrain(); renderDaily(); if ($('v-stats').classList.contains('on')) renderStats(); afterChange(); }
 renderBody(); renderAll(); save(); woBoot(); irlTicker(); irlReturn();
-setTimeout(() => { scrRefresh(true); scrPush(); renderScreen(); if (hwOn()) { hwRefresh(); renderHw(); hwTicker(); } afterChange(); }, 0);
+// Family link first: a limit a parent changed from their phone is in the plan before it's pushed to native again
+setTimeout(() => { famRefresh(); famApply(); renderFam(); scrRefresh(true); scrPush(); renderScreen(); if (hwOn()) { hwRefresh(); renderHw(); hwTicker(); } afterChange(); famPush(true); }, 0);
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
 // a new day while the app stays open (or comes back from the background): redraw so "today" moves
 let lastDay = today();

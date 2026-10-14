@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>LEVEL UP Family</title>
+  <meta name="description" content="Your child's LEVEL UP day: screen time, homework and what's worth a look. Private to your family.">
+  <meta name="theme-color" content="#0c0a1d">
+  <meta name="color-scheme" content="dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="LU Family">
+  <meta name="format-detection" content="telephone=no">
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="icon" href="/icons/icon-192.png" sizes="192x192">
+  <link rel="preload" href="/fonts/archivo-var.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/barlowc-700.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="top" id="top" hidden>
+    <div class="who"><b id="kid">Family</b><span id="synced" aria-live="polite"></span></div>
+    <button class="ico" id="refresh" aria-label="Refresh"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.7 6.3A8 8 0 1020 12h-2.2a5.8 5.8 0 11-1.7-4.1L13 11h7V4z" fill="currentColor"/></svg></button>
+    <button class="ico" id="gear" aria-label="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 000-2l2.1-1.6-2-3.5-2.5 1a7.7 7.7 0 00-1.7-1L15 3.3h-4l-.4 2.6a7.7 7.7 0 00-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 000 2l-2.1 1.6 2 3.5 2.5-1a7.7 7.7 0 001.7 1l.4 2.6h4l.4-2.6a7.7 7.7 0 001.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 110-7 3.5 3.5 0 010 7z" transform="translate(-1 0)" fill="currentColor"/></svg></button>
+  </header>
+  <div class="off-banner" id="offline" hidden role="status"></div>
+
+  <main id="main" tabindex="-1"></main>
+
+  <nav class="tabs" id="tabs" hidden aria-label="Sections">
+    <button data-tab="today"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 110 18 9 9 0 010-18zm0 2.2a6.8 6.8 0 100 13.6 6.8 6.8 0 000-13.6zM11 7h2v5.2l3.4 2-1 1.7L11 13.4z" fill="currentColor"/></svg><span>Today</span></button>
+    <button data-tab="week"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10h3v10zm6.5 0V4h3v16zM17 20v-7h3v7z" fill="currentColor"/></svg><span>Week</span></button>
+    <button data-tab="alerts"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5a6.5 6.5 0 016.5 6.5v4.3l1.8 3.2H3.7l1.8-3.2V9A6.5 6.5 0 0112 2.5zM9.5 18.5h5a2.5 2.5 0 01-5 0z" fill="currentColor"/></svg><span>Alerts</span><i class="dot" id="alertDot" hidden></i></button>
+    <button data-tab="homework"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3.5h11.5A2.5 2.5 0 0119 6v14.5H7.5A2.5 2.5 0 015 18zm2.2 2v12.2c0 .3.2.6.5.6h9.1V5.5zM9 8h6v2H9z" fill="currentColor"/></svg><span>Homework</span></button>
+    <button data-tab="actions"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.5 2L4 13.5h6.5L9.5 22 20 9.5h-6.6z" fill="currentColor"/></svg><span>Actions</span></button>
+  </nav>
+
+  <div class="sheet-bg" id="sheetbg" hidden>
+    <section class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle"></section>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

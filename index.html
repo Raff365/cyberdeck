@@ -1402,6 +1402,42 @@ html:has(.pu:not([hidden])) { overflow: hidden; }
 .credit { line-height: 1.45; }
 .credit:first-of-type { margin-top: var(--s4); }
 
+/* Family link: the always-on "your parents can see this" line (Home, Stats) and its Parent mode sheet */
+.famline { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; margin: 0 0 var(--s3); padding: 8px 12px; border-radius: var(--r); border: 1px solid color-mix(in srgb, var(--hw) 35%, var(--rule)); background: color-mix(in srgb, var(--hw) 8%, var(--panel)); color: var(--dim); font: 400 var(--fs-meta)/1.35 var(--text); text-align: left; }
+.famline svg { width: 18px; height: 18px; flex: none; color: var(--hw); }
+.famline span { min-width: 0; }
+.famline b { color: var(--chalk); font-weight: 600; }
+#v-stats > .famline { margin-top: var(--s2); }
+.sheet .fam-lab { display: block; margin: 18px 0 8px; }
+.fam-list { margin: 0 0 4px; padding-left: 18px; font-size: var(--fs-body); line-height: 1.45; color: var(--dim); }
+.fam-list li { margin: 3px 0; }
+.sheet .fam-never { margin: 0; }
+.sheet .fam-err { margin: 10px 0 0; }
+.sheet .go.fam-go { display: flex; align-items: center; justify-content: center; background: var(--hw); color: var(--hw-ink); box-shadow: none; }
+.sheet .go.fam-go:disabled { background: var(--panel-hi); color: var(--dim); opacity: 1; }
+.fam-url { color: var(--chalk); font-weight: 600; overflow-wrap: anywhere; }
+.fam-sync { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; margin-top: 6px; font-size: var(--fs-meta); color: var(--dim); }
+.fam-sync .act { flex: none; }
+.fam-code { display: flex; align-items: center; gap: var(--s4); }
+.fam-qrw { flex: none; width: 148px; height: 148px; border-radius: 12px; overflow: hidden; background: #fff; }
+.fam-qr { display: block; width: 100%; height: 100%; }
+.fam-cd { min-width: 0; }
+.fam-cd b { display: block; font: 800 34px/1 var(--display); letter-spacing: .08em; color: var(--chalk); white-space: nowrap; }
+.fam-cd small { display: block; margin-top: 6px; font-size: var(--fs-meta); color: var(--dim); }
+.fam-two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.fam-two .go, .fam-two .ghost { margin-top: 6px; height: 52px; font-size: 17px; }
+.sheet .fam-ph .act { flex: none; white-space: nowrap; }
+.fam-devs { display: grid; }
+.fam-dev { display: flex; align-items: center; gap: 12px; min-height: 56px; border-bottom: 1px solid var(--rule); }
+.fam-dev:last-child { border-bottom: 0; }
+.fam-dev .grow { flex: 1; min-width: 0; }
+.fam-dev b { display: block; font-size: var(--fs-body); font-weight: 600; overflow-wrap: anywhere; }
+.fam-dev small { display: block; margin-top: 2px; font-size: var(--fs-meta); color: var(--dim); }
+.fam-dev .act { flex: none; padding: 0 4px; }
+.sheet .fam-dev-l { margin: 0; }
+.sheet .ghost.fam-off { margin-top: 22px; color: #ff9fb0; border-color: #5a2636; }
+@media (max-width: 360px) { .fam-qrw { width: 120px; height: 120px; } .fam-cd b { font-size: 28px; } .fam-code { gap: var(--s3); } }
+
 @media (max-width: 360px) {
   .earn { grid-template-columns: minmax(0, 1fr); gap: 7px; }
   .figures div { padding: 12px 10px; }
@@ -1427,6 +1463,7 @@ html:has(.pu:not([hidden])) { overflow: hidden; }
   <main class="view on" id="v-home">
     <button class="update" id="update" hidden></button>
     <p class="hello" id="hello"></p>
+    <button class="famline" id="famHome" hidden></button>
     <section class="card" id="card" aria-label="Rank card">
       <div class="card-main">
         <div>
@@ -1499,6 +1536,7 @@ html:has(.pu:not([hidden])) { overflow: hidden; }
 
   <!-- STATS -->
   <main class="view" id="v-stats">
+    <button class="famline" id="famStats" hidden></button>
     <div class="sec"><h2>Consistency</h2><button class="pm-key" id="pmKey" hidden aria-label="Parent mode"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V7.5a5 5 0 0110 0V10h1a1 1 0 011 1v9a1 1 0 01-1 1H6a1 1 0 01-1-1v-9a1 1 0 011-1zm2 0h6V7.5a3 3 0 00-6 0z" fill="currentColor"/></svg></button></div>
     <section class="panel hm">
       <div class="hm-top"><select id="hmsel" aria-label="Habit"></select><div class="num" id="hmrate"></div></div>

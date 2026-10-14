@@ -1,0 +1,17 @@
+{
+  "name": "levelup-family",
+  "private": true,
+  "version": "1.0.0",
+  "description": "LEVEL UP family link: a small Cloudflare Worker + Durable Object relay and the parent web app",
+  "type": "module",
+  "scripts": {
+    "assets": "sh scripts/sync-assets.sh",
+    "dev": "sh scripts/sync-assets.sh && wrangler dev --local",
+    "test": "sh scripts/sync-assets.sh && node --test test/*.test.mjs",
+    "deploy": "sh scripts/sync-assets.sh && wrangler deploy"
+  },
+  "devDependencies": {
+    "jsqr": "1.4.0",
+    "wrangler": "4.42.0"
+  }
+}

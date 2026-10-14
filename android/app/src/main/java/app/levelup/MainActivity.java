@@ -65,6 +65,10 @@ public class MainActivity extends Activity {
     private String openJs;                    // TRAIN INSTEAD / EMERGENCY UNLOCK was tapped: run once the page is ready
     private PermissionRequest camAsk;         // the page's camera request, waiting for Android's permission dialog
     private final AtomicBoolean fitBusy = new AtomicBoolean();   // one voting link at a time
+    // Family link: a request arrived or the link went away; the page looks again
+    private final Runnable famListener = () -> runOnUiThread(() -> {
+        if (pageReady) js("window.levelupFamilyChanged && window.levelupFamilyChanged()");
+    });
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -171,6 +175,7 @@ public class MainActivity extends Activity {
         });
 
         web.addJavascriptInterface(new Bridge(), "LevelUpAndroid");
+        FamilySync.listener = famListener;
         // only a fresh start from the block screen: a task recreated after process death, or reopened from Recents,
         // still carries the extra in its root intent and must not open the workout (or push-ups) again
         if (savedInstanceState == null && (getIntent().getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) == 0) openJs = openJs(getIntent());
@@ -253,6 +258,7 @@ public class MainActivity extends Activity {
         }
         // back from Settings (Usage access, the blocker) or from a limited app: the numbers may have moved
         if (pageReady) js("window.levelupScreenTimeChanged && window.levelupScreenTimeChanged()");
+        FamilySync.opened(this);
     }
 
     // ------------------------------------------------------------------ updates
@@ -386,6 +392,29 @@ public class MainActivity extends Activity {
         });
     }
 
+    /** A Family link answer back to the page: window.levelupFamily(req, json), on the UI thread. */
+    private void famReply(String req, String json) {
+        runOnUiThread(() -> js("window.levelupFamily && window.levelupFamily(" + JSONObject.quote(req) + "," + JSONObject.quote(json) + ")"));
+    }
+
+    /** Runs a Family link call off the UI thread, if a parent's PIN is open; else answers {ok:false, why:"pin"} at once. */
+    private void famAsync(String req, java.util.concurrent.Callable<String> call) {
+        final String r = req == null ? "" : req.length() > 40 ? req.substring(0, 40) : req;
+        if (!Homework.touch(this)) {
+            famReply(r, "{\"ok\":false,\"why\":\"pin\"}");
+            return;
+        }
+        new Thread(() -> {
+            String out;
+            try {
+                out = call.call();
+            } catch (Exception e) {
+                out = "{\"ok\":false,\"why\":\"failed\"}";
+            }
+            famReply(r, out);
+        }, "levelup-family-ui").start();
+    }
+
     /** A Daily Fit answer back to the page, on the UI thread. */
     private void fitDone(String fn, String key, String json) {
         runOnUiThread(() -> js("window." + fn + " && window." + fn + "(" + JSONObject.quote(key) + "," + JSONObject.quote(json) + ")"));
@@ -397,6 +426,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (FamilySync.listener == famListener) FamilySync.listener = null;
         web.destroy();
         super.onDestroy();
     }
@@ -677,6 +707,80 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 return false;
             }
+        }
+
+        // ---- Family link (FamilySync): setting it up, codes, devices, photos and unlinking need a parent's PIN (Parent mode)
+
+        @JavascriptInterface
+        public String familyStatus() {
+            return FamilySync.statusJson(MainActivity.this);
+        }
+
+        /** Answers later: window.levelupFamily(req, {ok, code, codeExp, link} | {ok:false, why}). */
+        @JavascriptInterface
+        public void familySetup(String req, String url, String name) {
+            famAsync(req, () -> FamilySync.setupJson(MainActivity.this, url, name));
+        }
+
+        @JavascriptInterface
+        public void familyCode(String req) {
+            famAsync(req, () -> FamilySync.newCodeJson(MainActivity.this));
+        }
+
+        @JavascriptInterface
+        public void familyDevices(String req) {
+            famAsync(req, () -> FamilySync.devicesJson(MainActivity.this, null));
+        }
+
+        @JavascriptInterface
+        public void familyRevoke(String req, String id) {
+            famAsync(req, () -> id == null || !id.matches("[A-Za-z0-9_-]{11}") ? "{\"ok\":false,\"why\":\"bad\"}" : FamilySync.devicesJson(MainActivity.this, id));
+        }
+
+        /** Deletes the family's data on the server and the link here. force: forget it here even when the server can't be reached. */
+        @JavascriptInterface
+        public void familyUnlink(String req, boolean force) {
+            famAsync(req, () -> FamilySync.unlinkJson(MainActivity.this, force));
+        }
+
+        /** Homework photos to the parents' server: on or off (off by default). False: no PIN open, or not linked. */
+        @JavascriptInterface
+        public boolean familyPhotos(boolean on) {
+            return Homework.touch(MainActivity.this) && FamilySync.setPhotos(MainActivity.this, on);
+        }
+
+        /** Parent mode's numbers, built by app.js, for the next sync. */
+        @JavascriptInterface
+        public boolean familySnapshot(String json) {
+            return FamilySync.snapshot(MainActivity.this, json);
+        }
+
+        /** A homework photo (base64 JPEG, 400 KB max) for a log entry; kept only while photos are on. */
+        @JavascriptInterface
+        public boolean familyPhoto(String entry, String b64) {
+            return FamilySync.photo(MainActivity.this, entry, b64);
+        }
+
+        /** Photo entries the server already has. */
+        @JavascriptInterface
+        public String familyHave() {
+            return FamilySync.haveJson(MainActivity.this);
+        }
+
+        /** Requests from a parent's phone that app.js applies (bonus coins, ideas) or mirrors (today's limit). */
+        @JavascriptInterface
+        public String familyTake() {
+            return FamilySync.takeJson(MainActivity.this);
+        }
+
+        @JavascriptInterface
+        public void familyDone(String id, boolean ok, String why) {
+            FamilySync.jsDone(MainActivity.this, id, ok, why == null ? "" : why.length() > 40 ? why.substring(0, 40) : why);
+        }
+
+        @JavascriptInterface
+        public void familySync() {
+            FamilySync.kick(MainActivity.this);
         }
 
         /** A limited app's name, for "Back to TikTok". "" if it isn't one. */

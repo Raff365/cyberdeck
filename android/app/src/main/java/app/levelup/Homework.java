@@ -56,6 +56,7 @@ final class Homework {
             "com.seesaw.seesaw"));
 
     private static volatile long parentUntil;   // elapsedRealtime while the parent's PIN is "open" (process memory only)
+    private static boolean parentTouchedRemotely;   // inside remoteCheckJson only (both synchronized on this class)
 
     private Homework() {
     }
@@ -230,11 +231,13 @@ final class Homework {
         SharedPreferences p = prefs(c);
         Session s = load(p);
         if (s != null) {
+            int notes = s.tp.length();
             boolean dirty = s.advance(now, up, boot);
+            if (s.tp.length() > notes && "clock".equals(s.tp.optJSONArray(s.tp.length() - 1).optString(1))) FamilySync.event(c, "clock");
             if (!blocker && !s.off) { s.note(now, "off"); s.off = true; dirty = true; }
             else if (blocker && s.off) { s.note(now, "on"); s.off = false; dirty = true; }
             if (s.acc >= CAP || (now >= s.start && now - s.start >= CAP)) {
-                end(p, s, now, "time", null, false);
+                end(c, p, s, now, "time", null, false);
                 return null;
             }
             if (dirty) store(p, s);
@@ -242,12 +245,12 @@ final class Homework {
         }
         Cfg k = cfg(p);
         if (k.on && k.set && due(k.days, k.at, now) && !ScreenTime.dayKey(now).equals(p.getString(DONE, "")) && pinIsSet(c)) {
-            return start(p, k, now, up, boot, blocker, "s");
+            return start(c, p, k, now, up, boot, blocker, "s");
         }
         return null;
     }
 
-    private static Session start(SharedPreferences p, Cfg k, long now, long up, int boot, boolean blocker, String why) {
+    private static Session start(Context c, SharedPreferences p, Cfg k, long now, long up, int boot, boolean blocker, String why) {
         Session s = new Session();
         s.id = newId();
         s.why = why;
@@ -265,11 +268,12 @@ final class Homework {
             e.commit();
         } catch (Exception ignored) {
         }
+        FamilySync.event(c, "hw_start");
         return s;
     }
 
     /** Ends the session into the log: "proof" | "pin" | "time" | "off". */
-    private static JSONObject end(SharedPreferences p, Session s, long now, String how, String note, boolean parentChecked) {
+    private static JSONObject end(Context c, SharedPreferences p, Session s, long now, String how, String note, boolean parentChecked) {
         try {
             JSONObject e = new JSONObject().put("id", s.id.matches(ID) ? s.id : newId()).put("t0", s.start).put("t1", Math.max(now, s.start))
                     .put("m", (int) Math.min(240, s.acc / MIN)).put("why", s.why).put("how", how).put("tp", s.tp);
@@ -282,6 +286,9 @@ final class Homework {
             SharedPreferences.Editor ed = p.edit().remove(SES).putString(LOG, out.toString());
             if ("proof".equals(how)) ed.putString(DONE, ScreenTime.dayKey(now));   // homework's done today: no scheduled one later
             ed.commit();
+            JSONObject d = new JSONObject().put("m", e.optInt("m")).put("how", how);
+            if (note != null && !note.isEmpty()) d.put("n", note);
+            FamilySync.event(c, "proof".equals(how) ? "hw_done" : "pin".equals(how) ? "hw_early" : "off".equals(how) ? "hw_off" : "hw_time", d);
             return e;
         } catch (Exception ex) {
             p.edit().remove(SES).commit();   // never leave a session that can't end
@@ -316,6 +323,12 @@ final class Homework {
             p.edit().putString(SES, s.json().toString()).commit();
         } catch (Exception ignored) {
         }
+    }
+
+    /** The blocker went away (switched off in Settings): Family link hears it, homework or not. */
+    static void blockerOff(Context c) {
+        blockerGone(c);
+        if (!ScreenTime.blockerOn(c)) FamilySync.blocker(c, false);
     }
 
     // ------------------------------------------------------------------ the schedule
@@ -553,7 +566,7 @@ final class Homework {
             boolean blocker = ScreenTime.blockerOn(c);
             if (!blocker) return why("blocker");
             if (tick(c) != null) return why("active");
-            start(p, k, System.currentTimeMillis(), SystemClock.elapsedRealtime(), bootCount(c), true, "m");
+            start(c, p, k, System.currentTimeMillis(), SystemClock.elapsedRealtime(), bootCount(c), true, "m");
             return "{\"ok\":true}";
         } catch (Exception e) {
             return why("failed");
@@ -584,7 +597,7 @@ final class Homework {
             if (id == null || !id.matches(ID) || !id.equals(s.ph)) return why("noproof");
             boolean pc = "parent".equals(s.rule);
             if (pc && !parentUse(c)) return why("parent");
-            JSONObject e = end(prefs(c), s, System.currentTimeMillis(), "proof", clean(note), pc);
+            JSONObject e = end(c, prefs(c), s, System.currentTimeMillis(), "proof", clean(note), pc);
             return e == null ? why("failed") : new JSONObject().put("ok", true).put("entry", e).toString();
         } catch (Exception ex) {
             return why("failed");
@@ -598,10 +611,34 @@ final class Homework {
             if (!parentUse(c)) return why("pin");
             Session s = tick(c);
             if (s == null) return why("inactive");
-            JSONObject e = end(prefs(c), s, System.currentTimeMillis(), "pin", null, false);
+            JSONObject e = end(c, prefs(c), s, System.currentTimeMillis(), "pin", null, false);
             return e == null ? why("failed") : new JSONObject().put("ok", true).put("entry", e).toString();
         } catch (Exception ex) {
             return why("failed");
+        }
+    }
+
+    /** A parent ended it from their own phone (Family link: the parents' server checked who asked). Logged like the PIN. */
+    static synchronized String remoteEndJson(Context c) {
+        try {
+            if (!pinIsSet(c)) return why("nopin");
+            Session s = tick(c);
+            if (s == null) return why("inactive");
+            JSONObject e = end(c, prefs(c), s, System.currentTimeMillis(), "pin", null, false);
+            return e == null ? why("failed") : "{\"ok\":true}";
+        } catch (Exception ex) {
+            return why("failed");
+        }
+    }
+
+    /** "Mark checked" from a parent's own phone (Family link). */
+    static synchronized String remoteCheckJson(Context c, String id, boolean on) {
+        if (!pinIsSet(c)) return why("nopin");
+        parentTouchedRemotely = true;
+        try {
+            return checkJson(c, id, on);
+        } finally {
+            parentTouchedRemotely = false;
         }
     }
 
@@ -611,7 +648,7 @@ final class Homework {
             Session s = tick(c);
             if (s == null) return why("inactive");
             if (ScreenTime.blockerOn(c)) return why("on");
-            JSONObject e = end(prefs(c), s, System.currentTimeMillis(), "off", null, false);
+            JSONObject e = end(c, prefs(c), s, System.currentTimeMillis(), "off", null, false);
             return e == null ? why("failed") : new JSONObject().put("ok", true).put("entry", e).toString();
         } catch (Exception ex) {
             return why("failed");
@@ -665,7 +702,7 @@ final class Homework {
     static synchronized String checkJson(Context c, String id, boolean on) {
         try {
             if (!pinIsSet(c)) return why("nopin");
-            if (!parentUse(c)) return why("pin");
+            if (!parentTouchedRemotely && !parentUse(c)) return why("pin");
             if (id == null || !id.matches(ID)) return why("gone");
             SharedPreferences p = prefs(c);
             JSONArray log = log(p);

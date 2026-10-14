@@ -1,0 +1,6 @@
+node_modules/
+.wrangler/
+.dev.vars
+# copied from ../fonts and ../icons by scripts/sync-assets.sh
+public/fonts/
+public/icons/

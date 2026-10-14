@@ -1,0 +1,89 @@
+# Deploys the LEVEL UP family server (family-server/: a Cloudflare Worker + Durable Objects, and the parent web app)
+# to the family's own Cloudflare account. Needs two repository secrets: CLOUDFLARE_API_TOKEN (template "Edit Cloudflare
+# Workers") and CLOUDFLARE_ACCOUNT_ID. Without them this job does nothing and still passes, with a note in the summary.
+name: Family server
+
+on:
+  push:
+    branches: [main, 'ccr-*']
+    paths:
+      - 'family-server/**'
+      - 'fonts/**'
+      - 'icons/**'
+      - '.github/workflows/family-server.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: family-server
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: family-server
+    steps:
+      - name: Check for the Cloudflare secrets
+        id: secrets
+        working-directory: .
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "$TOKEN" ] && [ -n "$ACCOUNT" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Family server: not deployed"
+              echo
+              echo "The repository secrets **CLOUDFLARE_API_TOKEN** and **CLOUDFLARE_ACCOUNT_ID** aren't set, so nothing was deployed."
+              echo "Add them in Settings > Secrets and variables > Actions, then run this workflow again (Actions > Family server > Run workflow)."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.secrets.outputs.ok == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.secrets.outputs.ok == 'true'
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: family-server/package-lock.json
+
+      - name: Install the tools (wrangler, dev only)
+        if: steps.secrets.outputs.ok == 'true'
+        run: npm ci
+
+      - name: Copy the shared fonts and icons into the web app
+        if: steps.secrets.outputs.ok == 'true'
+        run: sh scripts/sync-assets.sh
+
+      - name: Test (local worker)
+        if: steps.secrets.outputs.ok == 'true'
+        run: node --test test/*.test.mjs
+
+      - name: Deploy
+        if: steps.secrets.outputs.ok == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx wrangler deploy 2>&1 | tee deploy.log
+          url=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' deploy.log | head -1)
+          {
+            echo "### Family server deployed"
+            echo
+            if [ -n "$url" ]; then
+              echo "**URL:** $url"
+              echo
+              echo "Put this address in LEVEL UP: Parent mode > Family link > Your family's server. Parents open it on their phone (iPhone: Share > Add to Home Screen) and type the code."
+            else
+              echo "Deployed, but the workers.dev address wasn't in wrangler's output. Find it in the Cloudflare dashboard: Workers & Pages > levelup-family."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

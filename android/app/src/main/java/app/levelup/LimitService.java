@@ -25,7 +25,7 @@ import java.util.Map;
 public class LimitService extends AccessibilityService {
     private static final long MIN = 60_000L, WARN = 5 * MIN;
     private final Handler h = new Handler(Looper.getMainLooper());
-    private final Runnable check = this::check, hwTick = this::hwTick;
+    private final Runnable check = this::check, hwTick = this::hwTick, famTick = this::famTick;
     private final Map<String, Boolean> activities = new HashMap<>();
     private String fg;          // the app in front, as far as window changes tell
     private String blockedPkg;
@@ -40,6 +40,15 @@ public class LimitService extends AccessibilityService {
         } catch (Exception ignored) {
         }
         hwTick();   // homework's timer (and an "on again" note if it was switched off mid-session)
+        FamilySync.blocker(this, true);
+        famTick();
+    }
+
+    /** Family link (only when it's set up): a sync about every 15 minutes while the phone is on and online. */
+    private void famTick() {
+        h.removeCallbacks(famTick);
+        FamilySync.maybe(this);
+        h.postDelayed(famTick, FamilySync.EVERY);
     }
 
     @Override
@@ -121,6 +130,7 @@ public class LimitService extends AccessibilityService {
         if (used < 0) return;   // can't measure: fail open
         long left = r.limit * MIN - used;
         if (left <= 0) {
+            FamilySync.overLimit(this, r.limit, used / MIN);
             block(pkg);
             return;
         }
@@ -216,17 +226,18 @@ public class LimitService extends AccessibilityService {
     public void onInterrupt() {
     }
 
-    // switched off in Settings: during homework that is logged for the parent (an app update or a crash keeps it listed: not logged)
+    // switched off in Settings: during homework that is logged for the parent, and Family link tells the parents' phones
+    // (an app update or a crash keeps it listed: not logged)
     @Override
     public boolean onUnbind(Intent intent) {
-        Homework.blockerGone(this);
+        Homework.blockerOff(this);
         return super.onUnbind(intent);
     }
 
     @Override
     public void onDestroy() {
         h.removeCallbacksAndMessages(null);
-        Homework.blockerGone(this);
+        Homework.blockerOff(this);
         super.onDestroy();
     }
 }

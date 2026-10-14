@@ -57,7 +57,8 @@ import java.util.Set;
  */
 final class ScreenTime {
     static final String PREFS = "screentime";
-    private static final String CFG = "cfg", WARNED = "warned", UNL_UNTIL = "unlockUntil", UNL_DAY = "unlockDay", UNL_USED = "unlockUsed", UNL_LOG = "unlockLog";
+    private static final String CFG = "cfg", WARNED = "warned", UNL_UNTIL = "unlockUntil", UNL_DAY = "unlockDay", UNL_USED = "unlockUsed", UNL_LOG = "unlockLog",
+            FAM_DAY = "famDay", FAM_LIM = "famLimit";   // a parent's "just for today" limit from their own phone (Family link)
     static final long UNLOCK_MS = 15 * 60_000L;   // an emergency unlock (10 push-ups on camera): 15 minutes, twice a day
     private static final int UNLOCKS = 2;
     private static final long MIN = 60_000L, LOOKBACK = 6 * 60 * MIN;   // a session open at midnight began before it
@@ -204,6 +205,17 @@ final class ScreenTime {
             out = new JSONArray();   // unreadable: limit nothing
         }
         try {
+            // a parent changed today's limit from their phone: it holds for today, whatever the app pushes, unless a
+            // parent at this phone (PIN just typed) sets something else
+            SharedPreferences p = prefs(c);
+            String today = dayKey(System.currentTimeMillis());
+            if (today.equals(p.getString(FAM_DAY, ""))) {
+                if (Homework.parentOk(c)) p.edit().remove(FAM_DAY).remove(FAM_LIM).apply();
+                else out = withToday(out, today, p.getInt(FAM_LIM, 0), protectedSet(c));
+            }
+        } catch (Exception ignored) {
+        }
+        try {
             if (Homework.pinIsSet(c) && !Homework.parentOk(c)
                     && looser(new JSONArray(prefs(c).getString(CFG, "[]")), out, protectedSet(c), dayKey(System.currentTimeMillis()))) return false;
         } catch (Exception ignored) {
@@ -268,6 +280,45 @@ final class ScreenTime {
         if (!hasTomorrow) out.put(new JSONObject().put("from", tomorrow).put("limit", Math.max(0, newLim)).put("apps", new JSONArray(newApps)));
         for (int i = 0; i < later.length(); i++) out.put(later.get(i));
         return out;
+    }
+
+    /** plan with today's rule set to limit (same apps; from today only, past days keep theirs). Unchanged when nothing is limited today. */
+    static JSONArray withToday(JSONArray plan, String today, int limit, Set<String> prot) throws JSONException {
+        JSONObject cur = entryAt(plan, today);
+        if (cur == null || !okLimit(limit) || limit <= 0 || cur.optInt("limit") <= 0 || appsIn(cur, prot).isEmpty()) return plan;
+        JSONArray out = new JSONArray();
+        boolean put = false;
+        for (int i = 0; i < plan.length(); i++) {
+            JSONObject e = plan.getJSONObject(i);
+            int cmp = e.getString("from").compareTo(today);
+            if (cmp > 0 && !put) { out.put(new JSONObject().put("from", today).put("limit", limit).put("apps", cur.getJSONArray("apps"))); put = true; }
+            if (cmp == 0) continue;
+            out.put(e);
+        }
+        if (!put) out.put(new JSONObject().put("from", today).put("limit", limit).put("apps", cur.getJSONArray("apps")));
+        return out;
+    }
+
+    /**
+     * Family link: a parent tightened today's limit, or allowed more today, from their own phone (the parents' server
+     * checked it was a parent). Just for today; tomorrow the plan's own rule applies. {ok} | {ok:false, why}.
+     */
+    static synchronized String familyLimitJson(Context c, int limit, String mode) {
+        try {
+            if (!okLimit(limit) || limit <= 0) return "{\"ok\":false,\"why\":\"bad\"}";
+            Rule r = rule(c);
+            if (r == null) return "{\"ok\":false,\"why\":\"nolimit\"}";
+            if ("tighten".equals(mode) && limit >= r.limit) return "{\"ok\":false,\"why\":\"notlower\"}";
+            if ("loosen".equals(mode) && limit <= r.limit) return "{\"ok\":false,\"why\":\"nothigher\"}";
+            if (!"tighten".equals(mode) && !"loosen".equals(mode)) return "{\"ok\":false,\"why\":\"bad\"}";
+            SharedPreferences p = prefs(c);
+            String today = dayKey(System.currentTimeMillis());
+            JSONArray plan = withToday(new JSONArray(p.getString(CFG, "[]")), today, limit, protectedSet(c));
+            p.edit().putString(CFG, plan.toString()).putString(FAM_DAY, today).putInt(FAM_LIM, limit).remove(WARNED).commit();
+            return "{\"ok\":true}";
+        } catch (Exception e) {
+            return "{\"ok\":false,\"why\":\"failed\"}";
+        }
     }
 
     /** The entry that rules day k: the last with from <= k. */
@@ -356,7 +407,16 @@ final class ScreenTime {
         long now = System.currentTimeMillis();
         prefs(c).edit().putLong(UNL_UNTIL, now + UNLOCK_MS).putString(UNL_DAY, dayKey(now)).putInt(UNL_USED, UNLOCKS - unlocksLeft(c) + 1)
                 .putString(UNL_LOG, unlockLog(c, now).put(now).toString()).commit();
+        FamilySync.event(c, "unlock", famLeft(c));
         return null;
+    }
+
+    private static JSONObject famLeft(Context c) {
+        try {
+            return new JSONObject().put("left", unlocksLeft(c));
+        } catch (JSONException e) {
+            return null;
+        }
     }
 
     /** When each emergency unlock was granted, oldest first: the last 14 days, for Parent mode (the app's own data can't rewrite it). */
