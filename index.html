@@ -1248,6 +1248,111 @@ html:has(.pu:not([hidden])) { overflow: hidden; }
 :where(.hw-fin, .hv-app) { transition: transform .12s var(--ease-out); }
 .hw.setup:active, .hw.live:not(:has(button:active)):active { transform: scale(.985); }
 
+/* ---- PARENT MODE: the parent's overview behind the PIN. Ink blue like the PIN pad; calmer than the game screens:
+   upright heads, no glow, one accent. Rendered on unlock, emptied on lock. */
+.pm-key { width: 44px; height: 44px; margin-right: -10px; display: grid; place-items: center; border-radius: 12px; color: var(--faint); transition: transform .12s var(--ease-out); }
+.pm-key svg { width: 20px; height: 20px; }
+.pm-key:active { transform: scale(var(--press)); color: var(--hw); }
+.pu.pm { z-index: 37; background: radial-gradient(90% 30% at 50% 0%, #7cb0ff1c, transparent 70%), var(--ground); }
+.pm .pu-top .mid b { font-style: normal; letter-spacing: .1em; }
+.pm .pu-x.pm-rep { margin: 0 -8px 0 auto; color: var(--hw); }
+.pm .pu-x svg { width: 22px; height: 22px; }
+.pm-body { padding-bottom: var(--s2); }
+.pm-h { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); margin: var(--s5) 0 var(--s2); }
+.pm-h.first { margin-top: var(--s2); }
+.pm-h h2 { font: 700 21px/1 var(--display); letter-spacing: .06em; text-transform: uppercase; }
+.pm-h span { font-size: var(--fs-meta); color: var(--dim); white-space: nowrap; }
+.pm-card { padding: var(--s4); border-radius: var(--r-lg); background: var(--surface); border: 1px solid var(--rule); }
+.pm-card > .label { display: block; }
+.pm-card > .label ~ .label { margin-top: var(--s4); }
+.pm-scr .act { margin-top: 2px; }
+.pm-big { display: flex; align-items: baseline; gap: 8px; margin-top: 10px; }
+.pm-big b { font: 800 54px/.86 var(--display); font-variant-numeric: tabular-nums; }
+.pm-big span { font: 700 19px/1 var(--display); color: var(--dim); letter-spacing: .03em; }
+.pm-big em { margin-left: auto; align-self: center; padding: 5px 9px; border-radius: 99px; border: 1px solid #ff9fb077; font: 600 var(--fs-cap)/1 var(--text); letter-spacing: .14em; text-transform: uppercase; font-style: normal; color: #ff9fb0; }
+.pm-meter { height: 8px; margin-top: 12px; border-radius: 4px; background: var(--panel-hi); overflow: hidden; }
+.pm-meter i { display: block; height: 100%; border-radius: 4px; background: var(--chalk); }
+.pm-meter.over i { background: #ff9fb0; }
+.pm-line { margin-top: 10px; font-size: var(--fs-body); line-height: 1.4; color: var(--dim); }
+.pm-line b { color: var(--chalk); font-weight: 600; }
+.pm-apps { display: grid; gap: 4px; margin-top: var(--s3); padding-top: var(--s3); border-top: 1px solid var(--rule); }
+.pm-apps .label { margin-bottom: 4px; }
+.pm-app { display: flex; align-items: center; gap: 10px; min-height: 40px; }
+.pm-app .ai { width: 32px; height: 32px; flex: none; border-radius: 9px; display: grid; place-items: center; overflow: hidden; background: var(--panel-hi); font: 800 16px/1 var(--display); color: var(--dim); }
+.pm-app .ai img { width: 100%; height: 100%; }
+.pm-app .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-body); }
+.pm-app b { flex: none; font: 700 17px/1 var(--display); color: var(--dim); font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+.pm-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+.pm-tile { min-width: 0; padding: 12px; border-radius: var(--r); background: var(--surface); border: 1px solid var(--rule); }
+.pm-tile .label { display: block; font-size: 10px; letter-spacing: .1em; }
+.pm-tile b { display: block; margin-top: 8px; font: 800 28px/1 var(--display); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pm-tile b i { margin-left: 5px; font: 700 15px/1 var(--display); font-style: normal; color: var(--dim); letter-spacing: .02em; }
+.pm-tile small { display: block; margin-top: 6px; font-size: var(--fs-meta); line-height: 1.35; color: var(--dim); overflow-wrap: anywhere; }
+.pm-tile.t-hw.done b { color: var(--done); }
+.pm-tile.t-hw.run b { color: var(--hw); }
+.pm-tile.t-pf b { color: var(--irl); }
+.pm .go, .sheet .go.pm-send { display: flex; align-items: center; justify-content: center; gap: 10px; background: var(--hw); color: var(--hw-ink); box-shadow: none; }
+.pm .go.pm-send { height: 56px; margin-top: var(--s3); font-size: 21px; }
+.pm .go svg, .sheet .go.pm-send svg { width: 20px; height: 20px; margin: 0; vertical-align: 0; }
+.wkc.pm-bars { margin: 8px 0 2px; }
+.wkc.pm-bars > span > i { position: relative; display: block; width: 100%; max-width: 30px; height: 92px; border-radius: 6px; background: var(--panel-hi); overflow: hidden; }
+.wkc.pm-bars > span > i::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: var(--h); border-radius: 6px 6px 0 0; background: #cfc9ee; }
+.wkc.pm-bars > span > i.hit::before { background: var(--done); }
+.wkc.pm-bars > span > i.over::before { background: #ff9fb0; }
+.wkc.pm-bars.pf > span > i::before { background: var(--irl); }
+.wkc.pm-bars s { position: absolute; left: 0; right: 0; bottom: var(--l); border-top: 2px dashed var(--chalk); opacity: .75; }
+.wkc.pm-bars i b { position: absolute; left: 0; right: 0; top: 5px; text-align: center; font: 800 12px/1 var(--display); color: var(--chalk); text-shadow: 0 1px 2px #000; }
+.pm-att { display: grid; }
+.pm-at { display: flex; align-items: flex-start; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--rule); }
+.pm-at:first-child { padding-top: 0; }
+.pm-at:last-child { border-bottom: 0; padding-bottom: 0; }
+.pm-at > i { width: 10px; height: 10px; flex: none; margin-top: 5px; border-radius: 50%; background: var(--faint); }
+.pm-at.warn > i { background: #ff9fb0; }
+.pm-at.unl > i { background: #ffb020; }
+.pm-at > div { min-width: 0; }
+.pm-at b { display: block; font: 600 15px/1.3 var(--text); }
+.pm-at small { display: block; margin-top: 3px; font-size: var(--fs-meta); line-height: 1.35; color: var(--dim); }
+.pm-att + .act { margin-top: 6px; }
+.pm-ok { font-size: var(--fs-body); color: var(--dim); }
+.pm-hlog .irow { padding-right: 8px; }
+.pm-chk { flex: none; align-self: center; display: grid; justify-items: center; align-content: center; gap: 4px; min-width: 60px; min-height: 52px; padding: 6px 4px; border-radius: 12px; border: 1px solid var(--rule-hi);
+  color: var(--dim); font: 700 12px/1 var(--display); letter-spacing: .08em; text-transform: uppercase; transition: transform .12s var(--ease-out); }
+.pm-chk svg { width: 20px; height: 20px; }
+.pm-chk svg path { stroke: currentColor; }
+.pm-chk.on { background: var(--hw); border-color: var(--hw); color: var(--hw-ink); }
+.pm-chk:active { transform: scale(var(--press)); }
+.pm-hlog + .act { margin-top: 4px; }
+.pm-ctl .setrow { gap: var(--s2); }
+.pm-ctl .setrow .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pm-ctl .setrow .val { flex: none; max-width: 52%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.1; }
+.pm-fine { margin-top: var(--s4); }
+.ov.pmv .go { background: var(--hw); color: var(--hw-ink); box-shadow: none; }
+.ov .ghost.pm-ck.on { border-color: var(--hw); color: var(--hw); }
+/* parent sheets: bonus coins, the report */
+.sheet:has(.pm-mode, .pm-kind) .lim button.on, .sheet:has(.pm-mode, .pm-kind) .go { background: var(--hw); border-color: var(--hw); color: var(--hw-ink); box-shadow: none; }
+.sheet:has(.pm-mode, .pm-kind) .go:disabled { background: var(--panel-hi); color: var(--dim); opacity: 1; }
+.sheet .pm-bal { color: #ffd23f; font-weight: 700; }
+.sheet .pm-lab { display: block; margin: 18px 0 8px; }
+.sheet .pm-mode { margin-bottom: 4px; }
+.sheet .pm-num { margin: 12px 0 14px; }
+.sheet .field .label small.opt { font: inherit; color: var(--faint); }
+.sheet .pm-err { min-height: 1.3em; margin: -6px 0 2px; font-size: var(--fs-note); color: #ff9fb0; }
+.sheet .pm-bgo { margin-top: 0; }
+.pm-hist { display: grid; }
+.pm-bh { display: flex; align-items: center; gap: 12px; min-height: 56px; border-bottom: 1px solid var(--rule); }
+.pm-bh:last-child { border-bottom: 0; }
+.pm-bh > b { flex: none; min-width: 52px; font: 800 22px/1 var(--display); font-variant-numeric: tabular-nums; }
+.pm-bh > b.up { color: #ffd23f; } .pm-bh > b.dn { color: #ff9fb0; }
+.pm-bh .grow { flex: 1; min-width: 0; }
+.pm-bh .nm { display: block; font-size: var(--fs-body); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pm-bh small { display: block; margin-top: 2px; font-size: var(--fs-meta); color: var(--dim); }
+.pm-bh .act { flex: none; padding: 0 4px; }
+.sheet .pm-kind { margin-bottom: 4px; }
+.sheet .pm-phs { margin-top: 6px; }
+.pm-prev { margin: 10px 0 4px; min-height: 120px; display: grid; place-items: center; border-radius: 14px; border: 1px solid var(--rule-hi); background: var(--ground); overflow: hidden; }
+.pm-prev img { display: block; width: 100%; height: auto; }
+.pm-prev p.dim { margin: 0; }
+
 /* ---- polish layer: one press, one greeting, one settings list, one check-off ---- */
 /* press: everything you can tap sinks a little while held (big slabs less, so they don't wobble) */
 :where(.go, .ghost, .fbtn, .wbtn, .qgo, .add, .who, .coins, .item, .titles button, .days button, .seg button, .rounds button, .lim button,
@@ -1394,7 +1499,7 @@ html:has(.pu:not([hidden])) { overflow: hidden; }
 
   <!-- STATS -->
   <main class="view" id="v-stats">
-    <div class="sec"><h2>Consistency</h2></div>
+    <div class="sec"><h2>Consistency</h2><button class="pm-key" id="pmKey" hidden aria-label="Parent mode"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V7.5a5 5 0 0110 0V10h1a1 1 0 011 1v9a1 1 0 01-1 1H6a1 1 0 01-1-1v-9a1 1 0 011-1zm2 0h6V7.5a3 3 0 00-6 0z" fill="currentColor"/></svg></button></div>
     <section class="panel hm">
       <div class="hm-top"><select id="hmsel" aria-label="Habit"></select><div class="num" id="hmrate"></div></div>
       <div class="months" id="months"></div>
@@ -1422,7 +1527,7 @@ html:has(.pu:not([hidden])) { overflow: hidden; }
     <section id="pf" aria-label="Phone-free time"></section>
 
     <div class="sec"><h2>Settings</h2></div>
-    <div class="panel setlist foot"><button class="setrow" id="hwOpen" hidden>Homework mode</button><button class="setrow" id="scrOpen" hidden>Screen time</button><button class="setrow" id="ideasOpen">Bored ideas</button><button class="setrow" id="soundToggle"></button><button class="setrow" id="checkUpdate" hidden>Check for updates</button><button class="setrow" id="export">Export backup</button><button class="setrow" id="import">Import backup</button><button class="setrow danger" id="erase">Erase all</button></div>
+    <div class="panel setlist foot"><button class="setrow" id="pmOpen" hidden>Parent mode</button><button class="setrow" id="hwOpen" hidden>Homework mode</button><button class="setrow" id="scrOpen" hidden>Screen time</button><button class="setrow" id="ideasOpen">Bored ideas</button><button class="setrow" id="soundToggle"></button><button class="setrow" id="checkUpdate" hidden>Check for updates</button><button class="setrow" id="export">Export backup</button><button class="setrow" id="import">Import backup</button><button class="setrow danger" id="erase">Erase all</button></div>
     <input type="file" id="importFile" accept="application/json,.json" hidden>
     <p class="credit">Backups keep your Daily and IRL logs but not your fit photos or proof shots: those stay on this phone.</p>
     <p class="credit"><span id="appVersion"></span> Body map art: react-native-body-highlighter (MIT). Push-up counter: MediaPipe (Apache 2.0).</p>
@@ -1442,6 +1547,7 @@ html:has(.pu:not([hidden])) { overflow: hidden; }
 <section class="pu" id="pu" hidden role="dialog" aria-modal="true" aria-label="Emergency unlock"><div class="pu-in" id="puIn" tabindex="-1"></div></section>
 <section class="pu pd" id="pd" hidden role="dialog" aria-modal="true" aria-label="I'm bored"><div class="pu-in" id="pdIn" tabindex="-1"></div></section>
 <section class="pu hv" id="hwv" hidden role="dialog" aria-modal="true" aria-label="Homework mode"><div class="pu-in" id="hwvIn" tabindex="-1"></div></section>
+<section class="pu pm" id="pm" hidden role="dialog" aria-modal="true" aria-label="Parent mode"><div class="pu-in" id="pmIn" tabindex="-1"></div></section>
 <section class="pu ov" id="ov" hidden role="dialog" aria-modal="true" aria-label="Daily"><div class="pu-in" id="ovIn" tabindex="-1"></div></section>
 <button class="wopill" id="woPill" hidden aria-label="Workout running. Open workout."></button>
 

@@ -668,10 +668,11 @@ const closeSheet = () => {
   if (!$('sheetbg').classList.contains('open')) return;
   $('sheetbg').classList.remove('open');
   const f = sheetOnClose; sheetOnClose = null; if (f) f();
+  if (pm) pmRender();   // a sheet opened from Parent mode: what it changed shows straight away
   if (prevFocus && prevFocus.isConnected) prevFocus.focus({ preventScroll: true });
 };
 $('sheetbg').onclick = e => { if (e.target === $('sheetbg')) closeSheet(); };
-addEventListener('keydown', e => { if (e.key === 'Escape' && (!$('pin').hidden || !$('hwv').hidden || !$('pu').hidden || $('rankup').classList.contains('open') || $('sheetbg').classList.contains('open') || !$('ov').hidden || !$('pd').hidden || !$('wo').hidden)) levelupBack(); });
+addEventListener('keydown', e => { if (e.key === 'Escape' && (!$('pin').hidden || !$('hwv').hidden || !$('pu').hidden || $('rankup').classList.contains('open') || $('sheetbg').classList.contains('open') || !$('ov').hidden || !$('pd').hidden || !$('wo').hidden || pm)) levelupBack(); });
 
 function habitSheet() {
   let pick = ALL.slice();
@@ -2240,6 +2241,7 @@ function puLoad() {   // the pose model, loaded once and kept; a failed load can
 }
 // native: EMERGENCY UNLOCK on the block screen (pkg: the app it covered). Home's card calls it too.
 window.levelupOpenPushups = pkg => {
+  pmLock();
   if (scrOn()) scrRefresh(true);
   let name = '';
   try { if (pkg && puBridge() && typeof LevelUpAndroid.appName === 'function') name = String(LevelUpAndroid.appName(pkg) || ''); } catch (e) {}
@@ -2726,7 +2728,7 @@ function ovClose() {
 const ovTop = (mid = '', right = '<span></span>') => `<div class="pu-top"><button class="pu-x" data-o="close" aria-label="Close">${X_ICON}</button><div class="mid">${mid}</div>${right}</div>`;
 function ovRender() {
   const o = ov, el = $('ovIn'); let h = '';
-  $('ov').className = `pu ov ${o.kind}${o.proof ? ' proof' : ''}${o.hw ? ' hwc' : ''}${['cam', 'review', 'view', 'pview', 'hview'].includes(o.step) ? ' live' : ''}`;
+  $('ov').className = `pu ov ${o.kind}${o.proof ? ' proof' : ''}${o.hw ? ' hwc' : ''}${o.pm ? ' pmv' : ''}${['cam', 'review', 'view', 'pview', 'hview'].includes(o.step) ? ' live' : ''}`;
   if (o.step === 'cam' && o.hw) {   // homework proof: a live photo only (no gallery, no timer), the back camera first
     h = ovTop('<b>Snap your homework</b><span>Live photo</span>')
       + `<div class="pu-stage fcam${o.mirror ? ' mirror' : ''}" data-load="${o.ready ? 0 : 1}"><video id="ovVid" playsinline muted></video><div class="fc-num" id="fcNum" aria-hidden="true"></div><div class="fc-flash" id="fcFlash"></div>
@@ -2742,7 +2744,8 @@ function ovRender() {
     const e = S.hw.log.find(x => x.id === o.hwe);
     h = ovTop(e ? `<b>${esc(e.n || 'Homework')}</b><span>${fmtDate(ymd(new Date(e.t0)), { weekday: 'long', day: 'numeric', month: 'short' })}</span>` : '<b>Homework</b>')
       + `<div class="pu-stage fpic">${e && e.ph ? `<span class="ph big">${BOOK}<img data-fit="${esc(e.ph)}" data-sz="full" alt="Homework photo"></span>` : ''}</div>
-      <div class="pu-act"><div class="pair2"><button class="ghost" data-o="hwdel">Delete</button><button class="go" data-o="close">Done</button></div><p class="pu-fine">Deleting needs a parent's PIN.</p></div>`;
+      <div class="pu-act">${o.pm && e ? `<div class="pair2"><button class="ghost pm-ck${e.pc ? ' on' : ''}" data-o="hwchk" aria-pressed="${!!e.pc}">${e.pc ? 'Checked' : 'Mark checked'}</button><button class="go" data-o="close">Done</button></div><p class="pu-fine">${e.pc ? 'Marked checked. It shows in the homework log.' : 'Looked at it? Mark it checked: it shows in the homework log.'}</p>`
+        : `<div class="pair2"><button class="ghost" data-o="hwdel">Delete</button><button class="go" data-o="close">Done</button></div><p class="pu-fine">Deleting needs a parent's PIN.</p>`}</div>`;
   } else if (o.step === 'err' && o.hw) {
     const E = { denied: ["Camera's off", 'Homework proof needs the camera. Allow it in App info > Permissions > Camera.'], busy: ['Camera busy', 'Another app is using the camera. Close it and try again.'], nocam: ['No camera', "Couldn't start a camera on this phone. A parent can end homework mode with the PIN."] }[o.err] || ['No camera', ''];
     h = ovTop() + `<div class="pu-body"><div class="wo-kick">Homework proof</div><h2 class="pu-hd sm">${E[0]}</h2><p class="pu-sub">${E[1]} It has to be a live photo, not one from your gallery.</p></div>
@@ -2800,6 +2803,7 @@ $('ovIn').onclick = e => {
   else if (a === 'retake') camOpen(o.proof, o.hw);
   else if (a === 'hwuse') hwUse();
   else if (a === 'hwdel') hwDelete(o.hwe);
+  else if (a === 'hwchk') pmCheck(o.hwe);
   else if (a === 'settings') { let ok = false; try { ok = LevelUpAndroid.openScreenTimeSettings('appinfo') === true; } catch (e) {} if (!ok) showNote("Couldn't open Settings", 'Open Settings > Apps > LEVEL UP > Permissions', FIT_NOTE, 'Camera'); }
   else if (a === 'vibe') {
     Sound.tap(); const v = b.dataset.v, f = o.step === 'view' && S.fits.find(x => x.id === o.id);
@@ -4062,11 +4066,519 @@ function hwpRepaint() {   // in place: same scroll, focus back on the same contr
 // native: OPEN LEVEL UP on the homework block screen
 window.levelupOpenHomework = () => {
   if (!hwOn()) return;
+  pmLock();
   $('rankup').classList.remove('open'); closeSheet(); pinDone(false); ovClose(); puClose();
   if (pd) pdClose();
   if (!$('v-home').classList.contains('on')) document.querySelector('.nav button[data-v=home]').click();
   hvOpen();
 };
+
+/* ------------------------------------------------------------------ PARENT MODE: an overview and the settings, behind the PIN */
+// No server: it lives in this app on this phone. The parent's PIN opens it (Homework.java checks it, and Parent mode keeps the
+// parent's 3 minutes open while it's in use); it locks when it's closed, when LEVEL UP goes to the background and after PM.IDLE
+// without a tap, and then nothing of it is left in the page. Every number comes from a ledger or log the app already keeps,
+// every control is the existing sheet. The other parent (an iPhone) gets a report: a picture and a short text, through the
+// share sheet. Bonus coins are the one new thing: a parent-granted ledger in S.bonus that coins() adds up.
+const pmOn = () => hwOn() && typeof LevelUpAndroid.pinCheck === 'function';
+const pmName = () => (String(S.user || '').trim().split(/\s+/)[0] || 'Raff').slice(0, 16);
+const pmWhen = t => { const k = ymd(new Date(t)); return `${k === today() ? 'Today' : k === ymd(addDays(new Date(), -1)) ? 'Yesterday' : DAY_NAME[new Date(t).getDay()]} ${clockAt(t)}`; };
+let pmT = null, pmRep = null;   // pmT: the idle check; pmRep: the report being made {kind, ph, url, blob, text, n}
+
+// everything the dashboard and the report show, from what the app already keeps
+function pmData() {
+  const t = today(), now = new Date(), D = S.screen.days, cur = scrAt(t), lim = scrLim(cur), I = irlLedger(), L = dlyLedger();
+  const meas = scrOn() && !!(scr.st && scr.st.usage);
+  const used = scr.now ? scr.now.used : D[t] ? D[t].u : 0, total = scr.now ? scr.now.total : D[t] ? D[t].t : 0;
+  const top = meas && scr.apps ? scr.apps.filter(a => a.min > 0).sort((a, b) => b.min - a.min).slice(0, 3) : [];
+  // homework today: running, done (with proof), ended another way, not yet, or not a homework day
+  const s = hw.st && hw.st.s, hwT = S.hw.log.filter(e => ymd(new Date(e.t1)) === t), proof = hwT.filter(e => e.how === 'proof');
+  let hwS;
+  if (s) hwS = { k: 'run', v: 'On now', sub: `Since ${clockAt(s.start)} · ${hwLeft() ? `${Math.ceil(hwLeft() / 60e3)} min to go` : "time's up, photo next"}` };
+  else if (proof.length) hwS = { k: 'done', v: 'Done', sub: `${proof.reduce((a, e) => a + e.m, 0)} min · finished ${clockAt(proof[proof.length - 1].t1)}` };
+  else if (hwT.length) { const e = hwT[hwT.length - 1]; hwS = { k: 'ended', v: 'Ended', sub: `${e.m} min · ${HOW[e.how].toLowerCase()}` }; }
+  else if (!S.hw.days.includes(now.getDay())) hwS = { k: 'off', v: 'Day off', sub: 'Not a homework day' };
+  else {
+    const nx = hw.st && hw.st.next && ymd(new Date(hw.st.next)) === t ? hw.st.next : 0;
+    hwS = { k: 'not', v: 'Not yet', sub: nx ? `Starts ${clockAt(nx)}` : hwReady() ? 'Nothing logged today' : "Homework mode isn't set up" };
+  }
+  const ckd = DLY.filter(([id]) => L.today[id]).map(d => d[1]);
+  const dq = S.habits.filter(h => due(h, now)), qd = dq.filter(h => h.log[t]).length;
+  // the last 7 days, oldest first (today is provisional)
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const d = addDays(now, i - 6), k = ymd(d), r = D[k];
+    return { k, d, u: k === t ? (meas || r ? used : null) : r ? r.u : null, l: k === t ? lim : r ? r.l : 0, fin: !!(r && r.f === 1), ok: scrOk(r),
+      pf: I.days[k] ? I.days[k].m : 0, ck: Object.values(dayDone(k, L.fd)).filter(Boolean).length };
+  });
+  const k0 = days[0].k, t0 = new Date(k0 + 'T00:00:00').getTime(), lims = days.filter(x => x.fin && x.l > 0);
+  const hwW = S.hw.log.filter(e => e.t0 >= t0), wo = S.workouts.filter(w => w.ok && w.day >= k0);
+  // emergency unlocks: native keeps when each was granted (the last 14 days); an older phone only knows today's count
+  const ul = scr.st && Array.isArray(scr.st.unlocks) ? scr.st.unlocks.filter(x => typeof x === 'number' && x > 0) : null;
+  const ulToday = ul ? ul.filter(x => ymd(new Date(x)) === t).length : scr.st ? Math.max(0, 2 - (+scr.st.unlocksLeft || 0)) : 0;
+  return { t, k0, t0, scrOn: scrOn(), meas, lim, used, total, top, hwS, ck: ckd.length, ckd, qd, qn: dq.length, pf: I.today.m, pfv: I.today.v, days,
+    under: lims.filter(x => x.ok).length, limDays: lims.length, hwN: hwW.length, hwM: hwW.reduce((a, e) => a + e.m, 0), hwP: hwW.filter(e => e.how === 'proof').length,
+    ulW: ul ? ul.filter(x => x >= t0).length : ulToday, ulT: ulToday, wo: wo.length, woM: wo.reduce((a, w) => a + Math.max(0, Math.round((w.end - w.start) / 6e4)), 0),
+    pfW: days.reduce((a, x) => a + x.pf, 0), ckDays: days.filter(x => x.ck >= CHECKIN_N).length, att: pmAttention(t0) };
+}
+// worth a look: what switched the limits off or got round them, newest first. Facts, in the app's own words
+function pmAttention(from) {
+  const out = [], t = today(), cur = scrAt(t), s = hw.st && hw.st.s;
+  if (scrOn() && scr.st && scrLim(cur)) {
+    if (!scr.st.usage) out.push({ k: 'warn', now: 1, hd: "Screen time can't be measured", sub: 'Usage access is off for LEVEL UP' });
+    else if (!scr.st.blocker) out.push({ k: 'warn', now: 1, hd: 'The screen time blocker is off', sub: 'Nothing gets locked till it is back on' });
+  }
+  if (s && s.off) out.push({ k: 'warn', now: 1, hd: 'Homework mode is on, but the blocker is off', sub: 'Apps aren\'t locked' });
+  const tpHd = { off: 'Blocker switched off during homework', clock: 'Phone clock changed during homework', boot: 'Phone restarted during homework' };
+  const tps = (tp, sub) => { for (const [at, w] of tp) if (at >= from && tpHd[w]) out.push({ t: at, k: w === 'boot' ? 'info' : 'warn', hd: tpHd[w], sub }); };
+  for (const e of S.hw.log) {
+    tps(e.tp, e.n ? `Homework: ${e.n}` : '');
+    if (e.t1 < from) continue;
+    if (e.how === 'off') out.push({ t: e.t1, k: 'warn', hd: 'Homework ended with the blocker off', sub: `${e.m} min, no coins` });
+    else if (e.how === 'pin') out.push({ t: e.t1, k: 'info', hd: 'Homework ended early by a parent', sub: `After ${e.m} min` });
+    else if (e.how === 'time') out.push({ t: e.t1, k: 'info', hd: 'Homework ran the full 4 hours', sub: 'It ended by itself' });
+  }
+  if (s) tps(Array.isArray(s.tp) ? s.tp.filter(x => Array.isArray(x) && typeof x[0] === 'number') : [], 'Homework running now');
+  for (const [k, d] of Object.entries(S.screen.days)) {
+    const end = new Date(k + 'T23:59:00').getTime();
+    if (k < t && d.f === 1 && d.l > 0 && d.u > d.l && end >= from) out.push({ t: end, day: k, k: 'warn', hd: 'Over the screen time limit', sub: `${fmtMins(d.u)} of ${fmtMins(d.l)} on limited apps` });
+  }
+  for (const at of scr.st && Array.isArray(scr.st.unlocks) ? scr.st.unlocks : []) if (typeof at === 'number' && at >= from) out.push({ t: at, k: 'unl', hd: 'Push-up unlock used', sub: '10 push-ups on camera for 15 min of limited apps' });
+  for (const e of S.irl.log) if (e.o === 'b' && e.t1 >= from) out.push({ t: e.t1, k: 'info', hd: 'Phone Down, but the phone was in use', sub: `${e.u || 0} min in other apps${e.top && e.top[0] ? `, mostly ${e.top[0][0]}` : ''}` });
+  return out.sort((a, b) => (b.now || 0) - (a.now || 0) || b.t - a.t);
+}
+const pmAtWhen = a => (a.now ? 'Right now' : a.day ? fmtDate(a.day) : pmWhen(a.t));
+
+/* the screen (#pm): one scroll. Rendered on unlock, emptied on lock */
+function pmHTML() {
+  const D = pmData(), name = pmName(), t = D.t, p = pm;
+  const tile = (lab, v, sub, cls = '') => `<div class="pm-tile ${cls}"><span class="label">${lab}</span><b>${v}</b><small>${sub}</small></div>`;
+  let scrH = '';
+  if (D.scrOn && !D.meas) scrH = `<div class="pm-card pm-scr"><span class="label">Screen time</span><p class="pm-line">Can't measure it: Usage access is off for LEVEL UP.</p><button class="act" data-pm="ctl-scr">Fix it</button></div>`;
+  else if (D.scrOn) {
+    const over = D.lim > 0 && D.used > D.lim;
+    scrH = `<div class="pm-card pm-scr"><span class="label">Screen time · ${D.lim ? 'limited apps' : 'no limit set'}</span>
+      <div class="pm-big"><b>${D.used}</b><span>${D.lim ? `of ${D.lim} min` : 'min on limited apps'}</span>${over ? '<em>Over</em>' : ''}</div>
+      ${D.lim ? `<div class="pm-meter${over ? ' over' : ''}" aria-hidden="true"><i style="width:${Math.min(100, D.used / D.lim * 100).toFixed(1)}%"></i></div>` : ''}
+      <p class="pm-line">Whole phone today: <b>${fmtMins(D.total)}</b>${D.ulT ? ` · push-up unlocks: <b>${D.ulT}</b>` : ''}</p>
+      ${D.top.length ? `<div class="pm-apps"><span class="label">Most used today</span>${D.top.map(a => `<div class="pm-app">${hwIcon(a)}<span class="nm">${esc(a.name)}</span><b>${fmtMins(a.min)}</b></div>`).join('')}</div>` : ''}</div>`;
+  }
+  const tiles = tile('Homework', D.hwS.v, esc(D.hwS.sub), `t-hw ${D.hwS.k}`)
+    + tile('Phone-free', `${D.pf}<i>min</i>`, !D.pf ? 'None yet today' : D.pfv >= D.pf ? 'Checked by the phone' : `${D.pfv} min checked by the phone`, 't-pf')
+    + tile('Daily check-ins', `${D.ck}<i>of ${DLY.length}</i>`, D.ck ? esc(D.ckd.join(', ')) : 'None yet today')
+    + tile('Quests', `${D.qd}<i>of ${D.qn}</i>`, !D.qn ? 'None due today' : D.qd >= D.qn ? 'All done' : `${D.qn - D.qd} to go`);
+  // the week: limited-app minutes against each day's limit, and phone-free minutes
+  const smax = Math.max(60, ...D.days.map(x => Math.max(x.u || 0, x.l || 0))), pmax = Math.max(60, ...D.days.map(x => x.pf));
+  const col = (x, inner) => `<span class="${x.k === t ? 'today' : ''}">${inner}<small>${x.k === t ? 'Today' : DAY[x.d.getDay()]}</small></span>`;
+  const sb = D.days.map(x => col(x, `<i class="${x.l && x.u > x.l ? 'over' : x.ok ? 'hit' : ''}" style="--h:${x.u == null ? 0 : Math.min(100, x.u / smax * 100).toFixed(0)}%">${x.l ? `<s style="--l:${(x.l / smax * 100).toFixed(0)}%"></s>` : ''}<b>${x.u == null ? '' : x.u}</b></i>`)).join('');
+  const pb = D.days.map(x => col(x, `<i style="--h:${Math.min(100, x.pf / pmax * 100).toFixed(0)}%"><b>${x.pf || ''}</b></i>`)).join('');
+  const wk = tile('Under the limit', D.limDays ? `${D.under}<i>of ${D.limDays} days</i>` : '–', D.limDays ? 'Finished days with a limit' : 'No limit on those days')
+    + tile('Homework', `${D.hwN}<i>${D.hwN === 1 ? 'session' : 'sessions'}</i>`, D.hwN ? `${fmtMins(D.hwM)} · ${D.hwP} with a photo` : 'None this week')
+    + tile('Push-up unlocks', `${D.ulW}`, 'Emergency unlocks used')
+    + tile('Workouts', `${D.wo}`, D.wo ? fmtMins(D.woM) : 'None this week');
+  const att = D.att.length ? `<div class="pm-att">${D.att.slice(0, p.attAll ? 99 : 6).map(a => `<div class="pm-at ${a.k}"><i></i><div><b>${esc(a.hd)}</b><small>${esc(pmAtWhen(a))}${a.sub ? ` · ${esc(a.sub)}` : ''}</small></div></div>`).join('')}</div>
+      ${D.att.length > 6 && !p.attAll ? `<button class="act" data-pm="attall">Show all ${D.att.length}</button>` : ''}` : '<p class="pm-ok">Nothing to flag in the last 7 days.</p>';
+  // the homework log, photos as thumbnails; a parent marks one checked once they've looked at it
+  const list = S.hw.log.slice().reverse(), show = p.all ? list : list.slice(0, 5);
+  const hwRows = list.length ? `<div class="rows hlog pm-hlog">${show.map(e => {
+    const bad = hwBad(e), tp = e.tp.filter(x => x[1] !== 'on' || bad).map(x => `${TP[x[1]]} at ${clockAt(x[0])}`).join(' · '), dt = fmtDate(ymd(new Date(e.t0)));
+    return `<div class="irow hrow${bad || e.how === 'off' ? ' bad' : ''}">${e.ph ? `<button class="irow-ph" data-pm="ph" data-id="${e.id}" aria-label="Homework photo, ${esc(dt)}"><span class="ph">${BOOK}<img data-fit="${esc(e.ph)}" data-sz="thumb" alt=""></span></button>` : `<span class="irow-ic">${BOOK}</span>`}
+      <span class="grow"><b>${dt}${e.n ? ` · ${esc(e.n)}` : ''}</b><small>${clockAt(e.t0)}–${clockAt(e.t1)} · ${e.m} min · ${HOW[e.how]}</small>${tp ? `<small class="tp">${esc(tp)}</small>` : ''}</span>
+      ${e.ph ? `<button class="pm-chk${e.pc ? ' on' : ''}" data-pm="chk" data-id="${e.id}" aria-pressed="${!!e.pc}" aria-label="${e.pc ? `Checked, ${esc(dt)}. Tap to undo` : `Mark the homework from ${esc(dt)} checked`}">${CHECK}<span>${e.pc ? 'Checked' : 'Check'}</span></button>` : ''}</div>`;
+  }).join('')}</div>${list.length > show.length ? `<button class="act" data-pm="all">Show all ${list.length}</button>` : ''}`
+    : '<p class="empty">No homework sessions yet. They land here with their photos.</p>';
+  // controls: the existing settings, opened with the PIN already typed
+  const e = scrAt(t) || scrNext(), cfg = hw.st && hw.st.cfg;
+  const ctl = (id, label, val) => `<button class="setrow" data-pm="${id}"><span class="nm">${label}</span>${val != null ? `<span class="val">${esc(val)}</span>` : ''}</button>`;
+  const ctls = (D.scrOn ? ctl('ctl-scr', 'Screen time limit', e && scrLim(e) ? `${limName(e.limit)} · ${e.apps.length} ${e.apps.length === 1 ? 'app' : 'apps'}` : 'Off') : '')
+    + ctl('ctl-hw', 'Homework settings', cfg && cfg.set ? `${cfg.min} min${cfg.on ? ' · scheduled' : ''}` : 'Set up')
+    + ctl('ctl-ideas', 'Bored ideas', `${S.irl.ideas.length}`) + ctl('ctl-bonus', 'Bonus coins', `${coins().toLocaleString()} coins`) + ctl('ctl-pin', 'Change PIN', null);
+  return `<div class="pu-top"><button class="pu-x" data-pm="close" aria-label="Lock and close Parent mode">${X_ICON}</button><div class="mid"><b>Parent mode</b><span>${esc(name)} · ${fmtDate(t, { weekday: 'short', day: 'numeric', month: 'short' })}</span></div><button class="pu-x pm-rep" data-pm="report" aria-label="Send a report">${SEND_ICON}</button></div>
+    <div class="pm-body">
+      <div class="pm-h first"><h2>Today</h2><span>as of ${clockAt(Date.now())}</span></div>
+      ${scrH}<div class="pm-tiles">${tiles}</div>
+      <button class="go pm-send" data-pm="report">${SEND_ICON}Send a report</button>
+      <div class="pm-h"><h2>Last 7 days</h2><span>${fmtDate(D.k0, { day: 'numeric', month: 'short' })} – ${fmtDate(t, { day: 'numeric', month: 'short' })}</span></div>
+      <div class="pm-card">${D.scrOn ? `<span class="label">Screen time · limited apps</span><div class="wkc pm-bars" role="img" aria-label="${esc(D.days.map(x => `${DAY_NAME[x.d.getDay()]} ${x.u == null ? 'no data' : `${x.u} min${x.l ? ` of ${x.l}` : ''}`}`).join(', '))}">${sb}</div>` : ''}
+        <span class="label">Phone-free minutes</span><div class="wkc pm-bars pf" role="img" aria-label="${esc(D.days.map(x => `${DAY_NAME[x.d.getDay()]} ${x.pf} min`).join(', '))}">${pb}</div></div>
+      <div class="pm-tiles">${wk}</div>
+      <div class="pm-h"><h2>Worth a look</h2><span>7 days</span></div>
+      <div class="pm-card">${att}</div>
+      <div class="pm-h"><h2>Homework log</h2><span>${list.length || ''}</span></div>
+      ${hwRows}
+      <div class="pm-h"><h2>Settings</h2></div>
+      <div class="panel setlist pm-ctl">${ctls}</div>
+      <p class="pu-fine pm-fine">Parent mode locks when you close it, when LEVEL UP goes to the background, or after 2½ minutes without a tap.</p>
+    </div>`;
+}
+function pmRender() {
+  if (!pm) return;
+  const box = $('pm'), top = box.scrollTop;
+  $('pmIn').innerHTML = pmHTML(); hydrate($('pmIn'));
+  box.scrollTop = top;
+}
+
+/* open, keep open, lock */
+async function pmOpen() {
+  if (!pmOn() || pm) return;
+  Sound.tap(); hwRefresh();
+  if (!hw.st) { Sound.nope(); showNote("Couldn't open Parent mode", 'Try again in a moment.', LOCK, 'Parent'); return; }
+  if (!hw.st.pin) { pmIntro(); return; }
+  if (await pinAsk({ title: 'Parent mode', sub: `Type the parent PIN to see ${pmName()}'s day and change the settings.` })) pmEnter();
+}
+function pmIntro() {   // no PIN yet: set one first
+  openSheet(`<h2>Parent mode</h2><p class="dim">One screen for a parent: screen time, homework, phone-free time and what's worth a look, plus the settings and bonus coins. It needs a parent PIN first: 4 to 6 digits, just for you.</p>
+    <button class="go" data-pmi="set">Set a parent PIN</button><button class="ghost" data-pmi="no">Not now</button>`, el => {
+    el.querySelector('[data-pmi=set]').onclick = async () => { Sound.tap(); closeSheet(); if (await pinAsk({ mode: 'set', title: 'Parent PIN', sub: 'Only a parent should know it.' })) pmEnter(); };
+    el.querySelector('[data-pmi=no]').onclick = closeSheet;
+  });
+}
+function pmEnter() {
+  closeSheet(); if (ov) ovClose();
+  pm = { at: Date.now(), nat: Date.now(), all: false, attAll: false };
+  if (scrOn()) scrRefresh(true);
+  hwRefresh();
+  $('pm').hidden = false; $('pm').scrollTop = 0; pmRender(); $('pmIn').focus({ preventScroll: true });
+  clearInterval(pmT); pmT = setInterval(pmTick, 5000);
+  // today's minutes per app (the "most used" rows) are slow to read: after the first paint
+  if (scrOn()) setTimeout(() => { if (pm && scrLoadApps()) pmRender(); }, 30);
+}
+function pmClose() { Sound.tap(); pmLock(); }
+// locks: the PIN closes natively, every parent sheet and photo closes, and the screen is emptied (nothing left in the page)
+function pmLock(why) {
+  if (!pm) return;
+  pm = null; clearInterval(pmT); pmT = null;
+  if (pp) pinDone(false);
+  if (ov && ov.pm) ovClose();
+  closeSheet(); $('sheet').innerHTML = '';   // a closed sheet keeps its last content: not this one
+  pmRepDrop();
+  $('pm').hidden = true; $('pmIn').innerHTML = '';
+  hwCall('pinLock'); hwRefresh(); renderAll();
+  if (why) showNote('Parent mode locked', why === 'idle' ? 'No taps for a while. Type the PIN to open it again.' : 'It locks when LEVEL UP goes to the background.', LOCK, 'Parent');
+}
+function pmTick() {
+  if (!pm) { clearInterval(pmT); pmT = null; return; }
+  if (document.hidden) { pmLock('away'); return; }
+  const now = Date.now();
+  if (now - pm.at > PM.IDLE || now < pm.at - 60e3) pmLock('idle');   // idle, or the clock went back
+}
+// any tap keeps it open; every PM.TOUCH the native 3 minutes are renewed too (so they always outlast PM.IDLE)
+function pmPoke() {
+  if (!pm) return;
+  const now = Date.now(); pm.at = now;
+  if (now - pm.nat < PM.TOUCH && now >= pm.nat) return;
+  pm.nat = now;
+  let ok = true;
+  try { if (typeof LevelUpAndroid.pinTouch === 'function') ok = LevelUpAndroid.pinTouch() !== false; } catch (e) {}
+  if (!ok) pmLock('idle');
+}
+for (const t of ['pointerdown', 'keydown', 'wheel', 'touchmove']) addEventListener(t, pmPoke, { capture: true, passive: true });
+document.addEventListener('visibilitychange', () => { if (document.hidden && pm) pmLock('away'); });
+window.levelupPaused = () => { if (pm) pmLock('away'); };   // native: the app went to the background
+
+$('pmIn').onclick = async e => {
+  const b = e.target.closest('[data-pm]'); if (!b || b.disabled || !pm) return;
+  const a = b.dataset.pm;
+  if (a !== 'close') Sound.tap();
+  if (a === 'close') pmClose();
+  else if (a === 'report') pmReportSheet();
+  else if (a === 'all') { pm.all = true; pmRender(); }
+  else if (a === 'attall') { pm.attAll = true; pmRender(); }
+  else if (a === 'ph') ovOpen({ kind: 'fit', step: 'hview', hwe: b.dataset.id, pm: true });
+  else if (a === 'chk') pmCheck(b.dataset.id);
+  else if (a === 'ctl-scr') { if (S.screen.plan.length) settingsSheet(); else setupSheet(); }
+  else if (a === 'ctl-hw') { hwRefresh(); if (hw.st && hw.st.cfg.set) hwParentSheet(); else hwSetup(); }
+  else if (a === 'ctl-ideas') ideasSheet();
+  else if (a === 'ctl-bonus') pmBonusSheet();
+  else if (a === 'ctl-pin') { if (await pinAsk({ mode: 'change', title: 'Change PIN', sub: '' }) && pm) { pm.nat = pm.at = Date.now(); hwRefresh(); pmRender(); } }
+};
+
+// "Mark checked": native keeps it on the phone's log (PIN-guarded); an entry only in this app's copy (an older backup's) is marked here
+function pmCheck(id) {
+  if (!pm) return;
+  const e = S.hw.log.find(x => x.id === id); if (!e) return;
+  const on = !e.pc, r = typeof LevelUpAndroid.homeworkCheck === 'function' ? hwCall('homeworkCheck', id, on) : { ok: false, why: 'gone' };
+  if (r && r.ok) hwRefresh();
+  else if (r && r.why === 'gone') { if (on) e.pc = 1; else delete e.pc; hwRev++; save(); }
+  else if (r && r.why === 'pin') { pmLock('idle'); return; }
+  else { Sound.nope(); showNote("Couldn't save that", 'Try again in a moment.', LOCK, 'Parent'); return; }
+  if (on) { Sound.check(); buzz(10); } else Sound.uncheck();
+  pmRender(); if (ov && ov.pm && ov.step === 'hview') ovRender();
+}
+
+/* bonus coins: give some for something done well, or take some back. Up to PM.CAP at a time, never below 0 */
+function bonusAdd(n, w) {
+  S.bonus.push({ id: uid() + uid(), at: Date.now(), n, w });
+  while (S.bonus.length > PM.KEEP) S.bank += S.bonus.shift().n;   // the oldest fold into the bank, so the total never changes
+  save(); renderCoins(); afterChange();
+}
+function pmBonusSheet() {
+  let mode = 'give', amt = 25, note = '';
+  const name = pmName();
+  const max = () => (mode === 'give' ? PM.CAP : Math.max(0, Math.min(PM.CAP, coins())));
+  const draw = () => {
+    const c = coins(), mx = max(), list = S.bonus.slice().reverse().slice(0, 20);
+    return `<h2>Bonus coins</h2><p class="dim">${esc(name)} has <b class="pm-bal">${c.toLocaleString()}</b> coins. Give some for something done well, or take some back. Up to ${PM.CAP} at a time.</p>
+      <div class="lim l2 pm-mode"><button class="${mode === 'give' ? 'on' : ''}" data-b="give" aria-pressed="${mode === 'give'}"><b>Give</b></button><button class="${mode === 'take' ? 'on' : ''}" data-b="take" aria-pressed="${mode === 'take'}"><b>Take back</b></button></div>
+      <span class="label pm-lab">How many</span><div class="lim l5 pm-amt">${[10, 25, 50, 100, 250].map(v => `<button data-a="${v}" class="${amt === v ? 'on' : ''}" aria-pressed="${amt === v}"${v > mx ? ' disabled' : ''}><b>${v}</b></button>`).join('')}</div>
+      <label class="field pm-num"><span class="label">Or type it</span><input id="bN" type="number" inputmode="numeric" min="1" max="${mx}" step="1" value="${amt || ''}" autocomplete="off"></label>
+      <label class="field"><span class="label">What for? <small class="opt">optional</small></span><input id="bW" maxlength="${PM.NOTE}" placeholder="${mode === 'give' ? 'Helped with the groceries' : 'Phone at the dinner table'}" value="${esc(note)}" autocomplete="off"></label>
+      <p class="pm-err" id="bErr" role="alert"></p>
+      <button class="go pm-bgo" id="bGo">Give</button>
+      <span class="label pm-lab">History</span>
+      ${list.length ? `<div class="pm-hist">${list.map(x => `<div class="pm-bh"><b class="${x.n > 0 ? 'up' : 'dn'}">${x.n > 0 ? '+' : '−'}${Math.abs(x.n)}</b><span class="grow"><span class="nm">${esc(x.w || (x.n > 0 ? 'Bonus' : 'Taken back'))}</span><small>${esc(pmWhen(x.at))}</small></span><button class="act quiet" data-rm="${x.id}" aria-label="Remove ${x.n > 0 ? '+' : '−'}${Math.abs(x.n)} from ${esc(pmWhen(x.at))}">Remove</button></div>`).join('')}</div>`
+        : '<p class="empty">No bonus coins yet.</p>'}`;
+  };
+  const bind = el => {
+    const N = el.querySelector('#bN'), W = el.querySelector('#bW'), go = el.querySelector('#bGo'), err = el.querySelector('#bErr');
+    const redraw = sel => { const top = $('sheet').scrollTop; el.innerHTML = draw().replace('<h2>', '<h2 id="sheetTitle">'); bind(el); $('sheet').scrollTop = top; const f = sel && el.querySelector(sel); if (f) f.focus({ preventScroll: true }); };
+    const valid = () => {
+      const v = N.value.trim(), n = /^\d+$/.test(v) ? +v : NaN, mx = max();
+      const ok = Number.isInteger(n) && n >= 1 && n <= mx;
+      go.disabled = !ok;
+      go.textContent = ok ? `${mode === 'give' ? 'Give' : 'Take back'} ${n} ${n === 1 ? 'coin' : 'coins'}` : mode === 'give' ? 'Give coins' : 'Take back coins';
+      err.textContent = !v || ok ? '' : mode === 'take' && !mx ? `${name} has no coins to take.` : n > mx ? (mode === 'give' ? `Up to ${PM.CAP} at a time.` : `Up to ${mx}: that's ${mode === 'take' && mx < PM.CAP ? `all ${name} has` : 'the most at a time'}.`) : 'A whole number, 1 or more.';
+      el.querySelectorAll('[data-a]').forEach(b => { const on = +b.dataset.a === n; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
+      return ok ? n : 0;
+    };
+    N.oninput = () => { amt = /^\d+$/.test(N.value.trim()) ? +N.value.trim() : 0; valid(); };
+    W.oninput = () => { note = W.value; };
+    el.querySelectorAll('[data-b]').forEach(b => b.onclick = () => { Sound.tap(); mode = b.dataset.b; if (amt > max()) amt = Math.min(25, max()); redraw(); });
+    el.querySelectorAll('[data-a]').forEach(b => b.onclick = () => { Sound.tap(); amt = +b.dataset.a; N.value = amt; valid(); });
+    el.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => {
+      if (!pm) return;
+      const x = S.bonus.find(y => y.id === b.dataset.rm); if (!x) return;
+      if (!confirm(`Remove ${x.n > 0 ? '+' : '−'}${Math.abs(x.n)} coins${x.w ? ` (${x.w})` : ''}? ${x.n > 0 ? `${name} loses them again.` : `${name} gets them back.`}`)) return;
+      S.bonus = S.bonus.filter(y => y !== x); save(); renderCoins(); afterChange(); Sound.uncheck(); redraw();
+    });
+    go.onclick = () => {
+      const n = valid(); if (!n || !pm) return;
+      const w = note.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, PM.NOTE);
+      bonusAdd(mode === 'give' ? n : -n, w);
+      if (mode === 'give') { Sound.buy(); buzz([10, 40, 10]); showNote(`+${n} coins for ${name}`, w || 'A bonus from a parent', COIN_SM, 'Parent'); }
+      else { Sound.uncheck(); showNote(`${n} coins taken back`, w || 'By a parent', COIN_SM, 'Parent'); }
+      note = ''; if (amt > max()) amt = Math.min(25, max());
+      redraw();
+    };
+    valid();
+  };
+  openSheet(draw(), bind);
+}
+
+/* the report: a picture (JPEG, LEVEL UP branding, readable in iMessage / WhatsApp) and a short text. Homework photos only if asked */
+function pmText(kind, D) {
+  const name = pmName(), wk = kind === 'week', L = [];
+  if (!wk) {
+    L.push(`LEVEL UP · ${name} · today (${fmtDate(D.t)})`);
+    if (D.scrOn) L.push(!D.meas ? "Screen time: couldn't be measured (Usage access is off)" : `Screen time: ${D.lim ? `${D.used} of ${D.lim} min on limited apps${D.used > D.lim ? ' (over)' : ''}` : `${D.used} min on limited apps, no limit set`} · whole phone ${fmtMins(D.total)}`);
+    if (D.top.length) L.push(`Most used: ${D.top.map(a => `${a.name} ${fmtMins(a.min)}`).join(', ')}`);
+    L.push(`Homework: ${D.hwS.v.toLowerCase()} (${D.hwS.sub})`);
+    L.push(`Phone-free: ${D.pf} min`);
+    L.push(`Daily check-ins: ${D.ck} of ${DLY.length} · quests: ${D.qd} of ${D.qn}`);
+    if (D.ulT) L.push(`Push-up unlocks: ${D.ulT}`);
+  } else {
+    L.push(`LEVEL UP · ${name} · last 7 days (${fmtDate(D.k0, { day: 'numeric', month: 'short' })} – ${fmtDate(D.t, { day: 'numeric', month: 'short' })})`);
+    if (D.scrOn) {
+      L.push(`Screen time on limited apps: ${D.days.map(x => `${DAY_NAME[x.d.getDay()]} ${x.u == null ? '–' : x.u}`).join(', ')} (min)`);
+      if (D.limDays) L.push(`Under the limit: ${D.under} of ${D.limDays} days`);
+    }
+    L.push(`Homework: ${D.hwN} ${D.hwN === 1 ? 'session' : 'sessions'}${D.hwN ? `, ${fmtMins(D.hwM)}, ${D.hwP} with a photo` : ''}`);
+    L.push(`Phone-free: ${D.pfW} min`);
+    L.push(`Push-up unlocks: ${D.ulW} · workouts: ${D.wo}${D.wo ? ` (${fmtMins(D.woM)})` : ''}`);
+    L.push(`Days with ${CHECKIN_N}+ Daily check-ins: ${D.ckDays}`);
+  }
+  const att = wk ? D.att : D.att.filter(a => a.now || ymd(new Date(a.t)) === D.t);
+  if (att.length) { L.push('Worth a look:'); for (const a of att.slice(0, 6)) L.push(`- ${a.hd} (${pmAtWhen(a)})`); if (att.length > 6) L.push(`- and ${att.length - 6} more`); }
+  let s = L.join('\n');
+  if (s.length > 1900) s = s.slice(0, 1897) + '...';
+  return s;
+}
+async function pmCard(kind, withPh) {
+  const D = pmData(), name = pmName(), wk = kind === 'week';
+  try { await Promise.all(['italic 800 80px "Barlow Condensed"', '800 40px "Barlow Condensed"', '700 40px "Barlow Condensed"', '400 30px Archivo', '600 24px Archivo'].map(f => document.fonts.load(f))); } catch (e) {}
+  const W = 1080, P = 60, IW = W - 2 * P, X = P + 36, c = document.createElement('canvas'); c.width = W; c.height = 4000;
+  const g = c.getContext('2d'), DISP = '"Barlow Condensed", "Arial Narrow", sans-serif', TXT = 'Archivo, Arial, sans-serif';
+  const C = { bg: '#0c0a1d', panel: '#161331', hi: '#1e1a40', rule: '#2b2752', chalk: '#f1eef9', dim: '#aba5cc', faint: '#918bb8', hw: '#7cb0ff', irl: '#b6f24a', warn: '#ff9fb0', done: '#3ddc84', amber: '#ffb020' };
+  const font = (w, sz, fam = DISP, it = false) => { g.font = `${it ? 'italic ' : ''}${w} ${sz}px ${fam}`; };
+  const txt = (s, x, y, col, al = 'left') => { g.fillStyle = col; g.textAlign = al; g.fillText(s, x, y); };
+  const spaced = px => { try { g.letterSpacing = `${px}px`; } catch (e) {} };
+  const cap = (s, x, y, col = C.dim, al = 'left') => { font(600, 24, TXT); spaced(3); txt(s.toUpperCase(), x, y, col, al); spaced(0); };
+  const fit = (s, maxW) => { s = String(s); if (g.measureText(s).width <= maxW) return s; while (s.length > 1 && g.measureText(s + '…').width > maxW) s = s.slice(0, -1); return s + '…'; };
+  const rr = (x, y, w, h, r, fill, stroke) => { g.beginPath(); if (g.roundRect) g.roundRect(x, y, w, h, r); else g.rect(x, y, w, h); if (fill) { g.fillStyle = fill; g.fill(); } if (stroke) { g.strokeStyle = stroke; g.lineWidth = 2; g.stroke(); } };
+  const wrap = (s, maxW, n = 2) => { const out = []; let cur = ''; for (const w of String(s).split(' ')) { const t2 = cur ? `${cur} ${w}` : w; if (cur && g.measureText(t2).width > maxW) { out.push(cur); cur = w; } else cur = t2; } if (cur) out.push(cur); return out.length > n ? [...out.slice(0, n - 1), fit(out.slice(n - 1).join(' '), maxW)] : out; };
+  // a panel goes behind what was just drawn on it (destination-over), so its height is whatever the content took
+  const panel = (y0, y1) => { g.globalCompositeOperation = 'destination-over'; rr(P, y0, IW, y1 - y0, 28, C.panel, C.rule); g.globalCompositeOperation = 'source-over'; };
+  const sec = fn => { const y0 = y; y = fn(y0 + 40) + 40; panel(y0, y); y += 24; };
+  const tiles = list => {   // 2 x 2
+    const tw = (IW - 20) / 2, th = 200;
+    list.forEach(([lab, val, unit, sub, col], i) => {
+      const x = P + (i % 2) * (tw + 20), ty = y + Math.floor(i / 2) * (th + 20);
+      rr(x, ty, tw, th, 24, C.panel, C.rule); cap(lab, x + 28, ty + 48);
+      font(800, 68, DISP, true); txt(val, x + 28, ty + 120, col || C.chalk);
+      if (unit) { const vw = g.measureText(val).width; font(700, 32, DISP); txt(fit(unit, tw - 70 - vw), x + 28 + vw + 10, ty + 120, C.dim); }
+      font(400, 25, TXT); wrap(sub, tw - 56, 2).forEach((l, j) => txt(l, x + 28, ty + 158 + j * 30, C.dim));
+    });
+    y += Math.ceil(list.length / 2) * (th + 20) + 4;
+  };
+  const bars = (yt, vals, max, col, lims) => {   // 7 columns: the minutes on a row above, day names below; lims: each day's limit (a dashed line)
+    const ch = 200, y0 = yt + 44, cw = (IW - 72) / 7, bw = Math.min(64, cw - 22);
+    vals.forEach((v, i) => {
+      const x = X + i * cw + (cw - bw) / 2, h = v == null ? 0 : Math.max(v ? 6 : 0, Math.min(1, v / max) * ch), day = D.days[i];
+      rr(x, y0, bw, ch, 12, C.hi);
+      if (h) rr(x, y0 + ch - h, bw, h, 12, typeof col === 'function' ? col(i) : col);
+      if (lims && lims[i]) { g.save(); g.setLineDash([10, 8]); g.strokeStyle = C.chalk; g.lineWidth = 3; const ly = y0 + ch - Math.min(1, lims[i] / max) * ch; g.beginPath(); g.moveTo(x - 6, ly); g.lineTo(x + bw + 6, ly); g.stroke(); g.restore(); }
+      font(700, 32, DISP); if (v) txt(String(v), x + bw / 2, yt + 28, lims && lims[i] && v > lims[i] ? C.warn : C.chalk, 'center');
+      font(600, 24, TXT); txt(day.k === D.t ? 'TODAY' : DAY_NAME[day.d.getDay()].toUpperCase(), x + bw / 2, y0 + ch + 40, day.k === D.t ? C.chalk : C.faint, 'center');
+    });
+    return y0 + ch + 44;
+  };
+  let y = P + 52;
+  // header: the wordmark, which report, whose and when
+  font(800, 58, DISP, true); txt('LEVEL', P, y, C.chalk); const lw = g.measureText('LEVEL ').width; txt('UP', P + lw, y, C.hw);
+  cap(wk ? 'Weekly report' : 'Daily report', W - P, y - 12, C.hw, 'right');
+  y += 112; font(800, 112, DISP, true); txt(fit(name.toUpperCase(), IW), P, y, C.chalk);
+  y += 58; font(700, 42, DISP); spaced(1);
+  txt(wk ? `Last 7 days · ${fmtDate(D.k0, { day: 'numeric', month: 'long' })} – ${fmtDate(D.t, { day: 'numeric', month: 'long' })}` : `Today · ${fmtDate(D.t, { weekday: 'long', day: 'numeric', month: 'long' })}`, P, y, C.dim);
+  spaced(0); y += 44;
+  if (!wk) {
+    if (D.scrOn) sec(y1 => {
+      cap(D.lim ? 'Screen time · limited apps' : 'Screen time · no limit set', X, y1 + 22); y1 += 22;
+      if (!D.meas) { font(400, 32, TXT); txt("Couldn't measure it: Usage access is off.", X, y1 + 62, C.dim); return y1 + 74; }
+      const over = D.lim > 0 && D.used > D.lim, big = String(D.used);
+      font(800, 132, DISP, true); txt(big, X, y1 + 136, over ? C.warn : C.chalk); const bw = g.measureText(big).width;
+      font(700, 46, DISP); txt(D.lim ? `of ${D.lim} min${over ? ' · over the limit' : ''}` : 'min', X + bw + 18, y1 + 136, over ? C.warn : C.dim);
+      y1 += 168;
+      if (D.lim) { rr(X, y1, IW - 72, 20, 10, C.hi); rr(X, y1, Math.max(20, (IW - 72) * Math.min(1, D.used / D.lim)), 20, 10, over ? C.warn : C.chalk); y1 += 58; } else y1 += 18;
+      font(400, 32, TXT); txt(`Whole phone: ${fmtMins(D.total)}${D.ulT ? ` · push-up unlocks: ${D.ulT}` : ''}`, X, y1 + 14, C.chalk); y1 += 14;
+      if (D.top.length) {
+        y1 += 70; cap('Most used today', X, y1); y1 += 6;
+        for (const a of D.top) { y1 += 50; font(700, 36, DISP); const m = fmtMins(a.min), mw = g.measureText(m).width; txt(m, W - X, y1, C.dim, 'right'); font(400, 32, TXT); txt(fit(a.name, IW - 110 - mw), X, y1, C.chalk); }
+      }
+      return y1;
+    });
+    tiles([['Homework', D.hwS.v, '', D.hwS.sub, D.hwS.k === 'done' ? C.done : D.hwS.k === 'run' ? C.hw : C.chalk], ['Phone-free', String(D.pf), 'min', D.pf ? (D.pfv >= D.pf ? 'Checked by the phone' : `${D.pfv} min checked by the phone`) : 'None yet today', C.irl],
+      ['Daily check-ins', String(D.ck), `of ${DLY.length}`, D.ck ? D.ckd.join(', ') : 'None yet today'], ['Quests', String(D.qd), `of ${D.qn}`, !D.qn ? 'None due today' : D.qd >= D.qn ? 'All done' : `${D.qn - D.qd} to go`]]);
+  } else {
+    if (D.scrOn) sec(y1 => {
+      cap('Screen time · limited apps, minutes', X, y1 + 22);
+      const smax = Math.max(60, ...D.days.map(x => Math.max(x.u || 0, x.l || 0)));
+      y1 = bars(y1 + 58, D.days.map(x => x.u), smax, i => { const x = D.days[i]; return x.l && x.u > x.l ? C.warn : x.ok ? C.done : '#cfc9ee'; }, D.days.map(x => x.l));
+      font(400, 32, TXT); txt(D.limDays ? `Under the limit on ${D.under} of ${D.limDays} days` : 'No limit on these days', X, y1 + 52, C.chalk);
+      if (D.limDays) { font(400, 25, TXT); txt('Dashed line: that day\'s limit', X, y1 + 92, C.faint); return y1 + 92; }
+      return y1 + 52;
+    });
+    sec(y1 => {
+      cap('Phone-free minutes', X, y1 + 22);
+      y1 = bars(y1 + 58, D.days.map(x => x.pf), Math.max(60, ...D.days.map(x => x.pf)), C.irl);
+      font(400, 32, TXT); txt(`${D.pfW} min in all, away from the phone`, X, y1 + 52, C.chalk);
+      return y1 + 52;
+    });
+    tiles([['Homework', String(D.hwN), D.hwN === 1 ? 'session' : 'sessions', D.hwN ? `${fmtMins(D.hwM)} · ${D.hwP} with a photo` : 'None this week', C.hw], ['Push-up unlocks', String(D.ulW), '', 'Emergency unlocks used'],
+      ['Workouts', String(D.wo), '', D.wo ? fmtMins(D.woM) : 'None this week'], ['Daily check-ins', String(D.ckDays), D.ckDays === 1 ? 'day' : 'days', `With ${CHECKIN_N} or more check-ins`]]);
+  }
+  // worth a look (today's only, for a day report)
+  const att = wk ? D.att : D.att.filter(a => a.now || ymd(new Date(a.t)) === D.t);
+  sec(y1 => {
+    cap('Worth a look', X, y1 + 22); y1 += 22;
+    if (!att.length) { font(400, 32, TXT); txt(wk ? 'Nothing to flag this week.' : 'Nothing to flag today.', X, y1 + 56, C.dim); return y1 + 64; }
+    for (const a of att.slice(0, 5)) {
+      y1 += 64; g.beginPath(); g.arc(X + 10, y1 - 11, 9, 0, Math.PI * 2); g.fillStyle = a.k === 'warn' ? C.warn : a.k === 'unl' ? C.amber : C.faint; g.fill();
+      font(600, 31, TXT); txt(fit(a.hd, IW - 110), X + 34, y1, C.chalk);
+      y1 += 38; font(400, 25, TXT); txt(fit(pmAtWhen(a) + (a.sub ? ` · ${a.sub}` : ''), IW - 110), X + 34, y1, C.dim);
+    }
+    if (att.length > 5) { y1 += 50; font(400, 26, TXT); txt(`+ ${att.length - 5} more in Parent mode`, X + 34, y1, C.faint); }
+    return y1 + 8;
+  });
+  // homework photos: only when the parent asked for them
+  if (withPh) {
+    const from = wk ? D.t0 : new Date(D.t + 'T00:00:00').getTime(), ids = S.hw.log.filter(e => e.ph && e.t1 >= from).slice(-4).reverse().map(e => e.ph), ims = [];
+    for (const id of ids) { try { const r = await FitDB.get(id); if (r && r.thumb instanceof Blob) ims.push(await loadImg(r.thumb)); } catch (e) {} }
+    if (ims.length) sec(y1 => {
+      cap('Homework photos', X, y1 + 22); y1 += 50;
+      const s = (IW - 72 - 3 * 16) / 4;
+      ims.forEach((im, i) => {
+        const x = X + i * (s + 16), iw = im.width, ih = im.height, k = Math.max(s / iw, s / ih);
+        g.save(); rr(x, y1, s, s, 16); g.clip(); g.drawImage(im, x + (s - iw * k) / 2, y1 + (s - ih * k) / 2, iw * k, ih * k); g.restore();
+        try { im.close && im.close(); } catch (e) {}
+      });
+      return y1 + s;
+    });
+  }
+  y += 14; font(400, 25, TXT);
+  txt(`Made by LEVEL UP on ${name}'s phone · ${fmtDate(D.t, { day: 'numeric', month: 'short', year: 'numeric' })}, ${clockAt(Date.now()).replace(/ /g, ' ')}`, P, y, C.faint);
+  y += P - 10;
+  // the background goes in last, behind everything
+  g.globalCompositeOperation = 'destination-over';
+  const grd = g.createRadialGradient(W / 2, -260, 40, W / 2, -260, 1100); grd.addColorStop(0, 'rgba(124,176,255,.22)'); grd.addColorStop(1, 'rgba(124,176,255,0)');
+  g.fillStyle = grd; g.fillRect(0, 0, W, y); g.fillStyle = C.bg; g.fillRect(0, 0, W, y);
+  g.globalCompositeOperation = 'source-over';
+  const out = document.createElement('canvas'); out.width = W; out.height = Math.ceil(y); out.getContext('2d').drawImage(c, 0, 0);
+  const blob = await new Promise(res => out.toBlob(res, 'image/jpeg', 0.9));
+  if (!blob) throw new Error('no picture');
+  return { blob, w: W, h: out.height, text: pmText(kind, D) };
+}
+function pmRepDrop() { if (pmRep && pmRep.url) URL.revokeObjectURL(pmRep.url); pmRep = null; }
+async function pmRepMake() {
+  const r = pmRep; if (!r) return;
+  const n = ++r.n;
+  if (r.url) { URL.revokeObjectURL(r.url); r.url = null; } r.blob = null; pmRepPaint();
+  try {
+    const c = await pmCard(r.kind, r.ph);
+    if (pmRep !== r || r.n !== n) return;
+    r.blob = c.blob; r.text = c.text; r.size = [c.w, c.h]; r.url = URL.createObjectURL(c.blob);
+  } catch (e) { if (pmRep === r && r.n === n) r.err = true; }
+  pmRepPaint();
+}
+function pmRepHTML() {
+  const r = pmRep, from = r.kind === 'week' ? Date.now() - 7 * 864e5 : new Date(today() + 'T00:00:00').getTime(), phs = S.hw.log.some(e => e.ph && e.t1 >= from);
+  return `<h2>Send a report</h2><p class="dim">A picture and a few lines of text, for anyone without LEVEL UP (an iPhone too). Nothing leaves the phone till you pick where it goes.</p>
+    <div class="lim l2 pm-kind"><button class="${r.kind === 'today' ? 'on' : ''}" data-r="today" aria-pressed="${r.kind === 'today'}"><b>Today</b></button><button class="${r.kind === 'week' ? 'on' : ''}" data-r="week" aria-pressed="${r.kind === 'week'}"><b>This week</b></button></div>
+    ${phs ? `<div class="st-blk pm-phs"><div><b class="${r.ph ? '' : 'off'}">Homework photos</b><small>${r.ph ? 'In the picture' : 'Left out of the picture'}</small></div><button class="act" role="switch" aria-checked="${r.ph}" data-r="ph">${r.ph ? 'Leave out' : 'Include'}</button></div>` : ''}
+    <button class="go pm-send" data-r="send"${r.url ? '' : ' disabled'}>${SEND_ICON}Send</button>
+    <p class="rule-note">It shows ${esc(pmName())}'s first name and the numbers in Parent mode${r.ph ? ', and the homework photos' : ''}, nothing else. This is what they'll see:</p>
+    <div class="pm-prev">${r.url ? `<img src="${r.url}" alt="The report picture">` : r.err ? '<p class="dim">Couldn\'t make the picture. Try again.</p>' : '<p class="dim">Making the picture...</p>'}</div>`;
+}
+function pmRepPaint() {
+  const box = $('sheet').querySelector('[data-pmr]'); if (!box || !pmRep || !$('sheetbg').classList.contains('open')) return;
+  const top = $('sheet').scrollTop; box.innerHTML = pmRepHTML().replace('<h2>', '<h2 id="sheetTitle">'); $('sheet').scrollTop = top;
+}
+function pmReportSheet() {
+  if (!pm) return;
+  pmRepDrop(); pmRep = { kind: 'today', ph: false, url: null, blob: null, text: '', n: 0 };
+  openSheet(`<div data-pmr>${pmRepHTML()}</div>`, el => {
+    el.onclick = async e => {
+      const b = e.target.closest('[data-r]'); if (!b || b.disabled || !pmRep || !pm) return;
+      const a = b.dataset.r; Sound.tap();
+      if (a === 'today' || a === 'week') { if (pmRep.kind !== a) { pmRep.kind = a; pmRepMake(); } }
+      else if (a === 'ph') { pmRep.ph = !pmRep.ph; pmRepMake(); }
+      else if (a === 'send') pmRepSend();
+    };
+  });
+  sheetOnClose = pmRepDrop;
+  pmRepMake();
+}
+// Android's share sheet (a JPEG and the text), else the browser's, else a download with the text copied
+async function pmShare(blob, text, file) {
+  try {
+    if (window.LevelUpAndroid && typeof LevelUpAndroid.sharePhoto === 'function') {
+      const b = await b64(blob);
+      if (b.length <= 8e6 && LevelUpAndroid.sharePhoto(b, text) !== false) return 'photo';
+      if (typeof LevelUpAndroid.shareText === 'function' && LevelUpAndroid.shareText(text) !== false) return 'text';   // the picture wouldn't go: the text can
+      return null;
+    }
+    const f = new File([blob], file, { type: 'image/jpeg' });
+    if (navigator.canShare && navigator.share && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f], text }); return 'web'; }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = file; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    try { await navigator.clipboard.writeText(text); return 'saved+copied'; } catch (e) { return 'saved'; }
+  } catch (e) { return e && e.name === 'AbortError' ? 'cancel' : null; }
+}
+async function pmRepSend() {
+  const r = pmRep; if (!r || !r.blob) return;
+  const how = await pmShare(r.blob, r.text, `levelup-${r.kind === 'week' ? 'week' : 'day'}-${today()}.jpg`);
+  if (!how) { Sound.nope(); showNote("Couldn't open sharing", 'Try again in a moment.', SEND_ICON, 'Parent'); }
+  else if (how === 'text') showNote('Sent the text only', "The picture was too big to share. The text has every number.", SEND_ICON, 'Parent');
+  else if (how.startsWith('saved')) showNote('Picture saved', how === 'saved+copied' ? 'The text is copied too: paste it with the picture.' : 'Send it from your downloads.', SEND_ICON, 'Parent');
+}
+$('pmOpen').hidden = $('pmKey').hidden = !pmOn();
+$('pmOpen').onclick = pmOpen; $('pmKey').onclick = pmOpen;
 
 function afterChange() { checkBoss(); checkAchievements(); renderCoins(); if ($('v-locker').classList.contains('on')) renderLocker(); }
 
@@ -4086,6 +4598,7 @@ window.levelupBack = () => {
   if ($('rankup').classList.contains('open')) { nextMoment(); return true; }
   if ($('sheetbg').classList.contains('open')) { closeSheet(); return true; }
   if (!$('ov').hidden) { ovClose(); return true; }   // the Daily camera, photo or breathing screen; camera off, nothing half-saved
+  if (pm) { pmClose(); return true; }   // Parent mode: closes and locks
   if (!$('hwv').hidden) { hvBack(); return true; }   // homework: a running session only hides (it keeps going) and Home shows
   if (!$('pd').hidden) { pdBack(); return true; }   // I'M BORED: a running Phone Down only hides, it keeps counting
   if (!$('wo').hidden) { $('wo').classList.contains('res') ? claimResults() : hideWorkout(); return true; }   // never discards
