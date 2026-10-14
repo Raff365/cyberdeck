@@ -21,7 +21,8 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 /**
- * The full-screen "time's up" screen LimitService shows over a limited app. Built in code (no layouts).
+ * The full-screen block screen LimitService shows over a locked app: "time's up" for the daily limit, or the
+ * homework-mode variant (no unlocks or workouts there: OPEN LEVEL UP or HOME SCREEN). Built in code (no layouts).
  * It re-checks every time it comes to the front and closes itself when it should no longer block,
  * so it can never trap anyone. Its own task, never in recents.
  */
@@ -31,7 +32,8 @@ public class BlockActivity extends Activity {
 
     private static final int GROUND = Color.rgb(0x0c, 0x0a, 0x1d), CHALK = Color.rgb(0xf1, 0xee, 0xf9), DIM = Color.rgb(0xab, 0xa5, 0xcc),
             FAINT = Color.rgb(0x91, 0x8b, 0xb8), PANEL_HI = Color.rgb(0x1e, 0x1a, 0x40), RULE = Color.rgb(0x2b, 0x27, 0x52),
-            RULE_HI = Color.rgb(0x3d, 0x38, 0x74), GOLD = Color.rgb(0xff, 0xb0, 0x20), INK = Color.rgb(0x1a, 0x12, 0x04);
+            RULE_HI = Color.rgb(0x3d, 0x38, 0x74), GOLD = Color.rgb(0xff, 0xb0, 0x20), INK = Color.rgb(0x1a, 0x12, 0x04),
+            HW = Color.rgb(0x7c, 0xb0, 0xff), HW_INK = Color.rgb(0x06, 0x12, 0x2e);   // homework's blue, as in the app
 
     private String pkg;
     private ScreenTime.Rule rule;
@@ -57,6 +59,18 @@ public class BlockActivity extends Activity {
     protected void onResume() {
         super.onResume();
         shownAt = System.currentTimeMillis();   // it came up (whether or not it stays)
+        // homework first: still running, still not an allowed or protected app, no call going on? otherwise go
+        Homework.Session hw = Homework.tick(this);
+        if (hw != null) {
+            if (pkg == null || hw.allows(pkg) || ScreenTime.isProtected(this, pkg) || ScreenTime.inCall(this)) {
+                finish();
+                return;
+            }
+            buildHomework(hw);
+            if (!buzzed) buzz();
+            buzzed = true;
+            return;
+        }
         // still over the limit on a still-limited app, and no call going on? otherwise there is nothing to block: go
         rule = ScreenTime.rule(this);
         long used = ScreenTime.unlockLeftMs(this) > 0 || rule == null || pkg == null || !rule.apps.contains(pkg) || ScreenTime.isProtected(this, pkg) || ScreenTime.inCall(this) ? -1
@@ -154,6 +168,78 @@ public class BlockActivity extends Activity {
         TextView cap2 = text(unl > 0 ? "10 push-ups on camera = 15 min · " + unl + " left today" : "No unlocks left today · resets at midnight", 13, DIM);
         cap2.setGravity(Gravity.CENTER_HORIZONTAL);
         col.addView(cap2, margins(8, 0));
+
+        Button home = button("HOME SCREEN", 18, CHALK, Typeface.create("sans-serif-condensed", Typeface.BOLD), shape(Color.TRANSPARENT, dp(14), RULE_HI, dp(2)));
+        home.setLetterSpacing(0.08f);
+        home.setOnClickListener(v -> goHome());
+        LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(56));
+        hp.topMargin = dp(14);
+        col.addView(home, hp);
+
+        TextView foot = text("Calls, texts and Settings still work.", 12, FAINT);
+        foot.setGravity(Gravity.CENTER_HORIZONTAL);
+        col.addView(foot, margins(16, 0));
+
+        ScrollView sv = new ScrollView(this);
+        sv.setFillViewport(true);
+        sv.setBackgroundColor(GROUND);
+        sv.addView(col, new ScrollView.LayoutParams(ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.MATCH_PARENT));
+        setContentView(sv);
+    }
+
+    /** HOMEWORK MODE: what's locked, how long till he can finish, what's allowed. Only OPEN LEVEL UP and HOME SCREEN. */
+    private void buildHomework(Homework.Session hw) {
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        Typeface display = Typeface.create("sans-serif-condensed", Typeface.BOLD_ITALIC);
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(dp(24), Math.max(dp(32), (int) (dm.heightPixels * 0.15f)), dp(24), dp(20));
+
+        TextView kicker = text("HOMEWORK MODE", 12, HW);
+        kicker.setTypeface(Typeface.DEFAULT_BOLD);
+        kicker.setLetterSpacing(0.14f);
+        col.addView(kicker);
+
+        TextView title = text("HOMEWORK FIRST", dm.widthPixels / dm.density < 360 ? 44 : 52, CHALK);
+        title.setTypeface(display);
+        title.setIncludeFontPadding(false);
+        title.setLineSpacing(0, 0.9f);
+        col.addView(title, margins(12, 0));
+
+        String name = ScreenTime.label(this, pkg);
+        TextView l1 = text((name == null || name.isEmpty() ? "This app" : name) + " is locked till your homework's done.", 18, CHALK);
+        l1.setLineSpacing(0, 1.2f);
+        col.addView(l1, margins(22, 0));
+        long left = hw.left(), m = (left + 59_999L) / 60_000L;
+        String l2s = left > 0 ? (m >= 60 ? m / 60 + " hr " + m % 60 + " min" : m + " min") + " to go. Then finish in LEVEL UP with a photo of your homework."
+                : "Time's done. Finish in LEVEL UP with a photo of your homework.";
+        TextView l2 = text(l2s, 15, DIM);
+        l2.setLineSpacing(0, 1.3f);
+        col.addView(l2, margins(6, 0));
+        TextView l3 = text(Homework.allowedLine(this, hw), 15, HW);
+        l3.setLineSpacing(0, 1.3f);
+        col.addView(l3, margins(10, 0));
+
+        View spacer = new View(this);
+        spacer.setMinimumHeight(dp(32));
+        col.addView(spacer, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(32), 1));
+
+        Button open = button("OPEN LEVEL UP", 22, HW_INK, display, shape(HW, dp(14), 0, 0));
+        open.setLetterSpacing(0.06f);
+        open.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setClass(this, MainActivity.class)
+                        .putExtra(MainActivity.OPEN, "homework")
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+            } catch (Exception ignored) {
+            }
+            finish();
+        });
+        col.addView(open, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(64)));
+
+        TextView cap = text("Your homework screen: allowed apps and FINISH", 13, DIM);
+        cap.setGravity(Gravity.CENTER_HORIZONTAL);
+        col.addView(cap, margins(8, 0));
 
         Button home = button("HOME SCREEN", 18, CHALK, Typeface.create("sans-serif-condensed", Typeface.BOLD), shape(Color.TRANSPARENT, dp(14), RULE_HI, dp(2)));
         home.setLetterSpacing(0.08f);

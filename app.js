@@ -75,6 +75,7 @@ function seed() {
     screen: { plan: [], days: {} },
     fits: [], fitKept: {}, polls: [], well: { goal: 8, bz: true, days: {} }, fitCam: { facing: 'user', timer: 5 },
     irl: { live: null, log: [], ideas: [], seen: [], draw: null, f: { t: 0, p: '' } },
+    hw: { log: [], days: [1, 2, 3, 4, 5], note: '' },
   };
 }
 // One-time carry-over from the first prototype (localStorage key lockin.v1).
@@ -225,6 +226,30 @@ const IRL_MINS = [10, 20, 30, 45, 60];
     draw: d && typeof d.k === 'string' && [0, 1, 2].includes(d.rr) && num(d.at) && d.at <= now ? { k: d.k, rr: d.rr, at: d.at } : null,
     f: { t: [10, 30].includes(f.t) ? f.t : 0, p: ['in', 'out'].includes(f.p) ? f.p : '' } };
 }
+// ...and saves from before HOMEWORK MODE get theirs. The phone keeps the real homework log (PIN-guarded, so Erase all or an
+// imported backup can't rewrite it); hw.log is a copy that pays coins and goes in backups: [{id, t0, t1: start and end (ms),
+// m: minutes that counted, why: 'm' started by hand | 's' by the schedule, how: 'proof' (a live photo) | 'pin' (a parent
+// ended it) | 'time' (4 hours, the longest one runs) | 'off' (ended with the blocker off), pc: 1 a parent checked the photo,
+// tp: [[time, 'off' | 'on' | 'clock' | 'boot']] the blocker switched off and on, the clock changed, the phone restarted,
+// ph: the proof photo's id (IndexedDB, like fits), n: what it was for}]; days: homework days for the streak (the schedule's,
+// else Mon-Fri); note: what the running one is for, as typed. The PIN itself is never here (native, hashed).
+function hwEntry(e) {
+  const str = (v, n) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n) : '');
+  const num = v => typeof v === 'number' && isFinite(v) && v > 0, okId = v => typeof v === 'string' && /^[a-z0-9]{4,24}$/i.test(v);
+  if (!e || typeof e !== 'object' || !okId(e.id) || !num(e.t0) || !num(e.t1) || e.t1 < e.t0 || !['proof', 'pin', 'time', 'off'].includes(e.how)) return null;
+  const o = { id: e.id, t0: e.t0, t1: e.t1, m: Number.isInteger(e.m) && e.m >= 0 ? Math.min(e.m, 240) : 0, why: e.why === 's' ? 's' : 'm', how: e.how,
+    tp: (Array.isArray(e.tp) ? e.tp : []).filter(t => Array.isArray(t) && num(t[0]) && ['off', 'on', 'clock', 'boot'].includes(t[1])).slice(0, 40).map(t => [t[0], t[1]]) };
+  if (e.pc === 1 || e.pc === true) o.pc = 1;
+  if (okId(e.ph)) o.ph = e.ph;
+  if (str(e.n, 80)) o.n = str(e.n, 80);
+  return o;
+}
+function hwNorm(x) {
+  const seen = new Set(), d = Array.isArray(x.days) ? x.days.filter(v => Number.isInteger(v) && v >= 0 && v < 7) : [];
+  return { log: (Array.isArray(x.log) ? x.log : []).map(hwEntry).filter(e => e && !seen.has(e.id) && seen.add(e.id)).sort((a, b) => a.t0 - b.t0).slice(-200),
+    days: d.length ? [...new Set(d)].sort() : [1, 2, 3, 4, 5], note: typeof x.note === 'string' ? x.note.replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 80) : '' };
+}
+S.hw = hwNorm(S.hw && typeof S.hw === 'object' && !Array.isArray(S.hw) ? S.hw : {});
 const save =() => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -585,31 +610,42 @@ $('export').onclick = () => {
 $('import').onclick = () => $('importFile').click();
 $('importFile').onchange = async e => {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  let g = 1;
   try {
     const x = JSON.parse(await f.text());
     if (!x || !Array.isArray(x.habits)) throw new Error('not a LEVEL UP backup');
     if (!confirm('Replace everything on this phone with this backup?')) return;
+    // with a parent's PIN set, a backup that would loosen the screen time limit needs it (native refuses it otherwise)
+    const xp = x.screen && Array.isArray(x.screen.plan) ? x.screen.plan.filter(e => e && typeof e.from === 'string' && Array.isArray(e.apps)) : [];
+    if (scrLooser(S.screen.plan, scrKeep(xp)) && !(g = await scrGate())) return;
     // a backup can't loosen today's screen-time limit: that waits for tomorrow, like in Screen time
     const sx = x.screen && typeof x.screen === 'object' && !Array.isArray(x.screen) ? x.screen : {};
     const P = (Array.isArray(sx.plan) ? sx.plan : []).filter(e => e && typeof e.from === 'string' && /^\d{4}-\d\d-\d\d$/.test(e.from) && Array.isArray(e.apps))
       .map(e => ({ from: e.from, limit: [0, ...SCR_LIMITS].includes(e.limit) ? e.limit : 60, apps: e.apps.filter(p => typeof p === 'string' && p) }))
       .sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
     x.screen = { ...sx, plan: scrKeep(P) };
+    if (g === 2) { try { LevelUpAndroid.setScreenTimeConfig(JSON.stringify({ v: 1, plan: x.screen.plan })); } catch (err) {} hwCall('pinLock'); }   // while the PIN is open
     localStorage.setItem(KEY, JSON.stringify(x)); location.reload();
-  } catch (err) { alert(`Could not import: ${err.message}`); }
+  } catch (err) { if (g === 2) hwCall('pinLock'); alert(`Could not import: ${err.message}`); }
 };
-$('erase').onclick = () => {
+$('erase').onclick = async () => {
   const keep = scrKeep([]);   // today's screen-time limit stays till midnight while the blocker is on
-  if (!confirm(`Erase every habit, goal, level and fit photo on this phone? This cannot be undone.${keep.length ? ' Your screen time limit stays on till midnight.' : ''}`)) return;
+  const hwKeep = hwOn() && hw.st && hw.st.pin ? ' Homework mode and its log stay: they\'re the parent\'s.' : '';
+  if (!confirm(`Erase every habit, goal, level and fit photo on this phone? This cannot be undone.${keep.length ? ' Your screen time limit stays on till midnight.' : ''}${hwKeep}`)) return;
+  const g = scrLooser(S.screen.plan, keep) ? await scrGate() : 1;   // it would loosen the limit: a parent's PIN, when one is set
+  if (!g) return;
   $('wo').hidden = true; $('wo').classList.remove('res'); woRes = null; stopTick(); keepOn(false); woRev++;
   ovClose(); fitReq = fitLate = null; Object.keys(fitURLs).forEach(fitForget); FitDB.clear().catch(() => {}); dlyRev++;
   pd = null; $('pd').hidden = true; $('pdIn').innerHTML = ''; clearInterval(irlT); irlT = null; irlRev++;
-  S = seed(); S.screen.plan = keep; save(); scrPush(); renderBody(); renderAll();   // native and JS agree on what is limited
+  hv = null; $('hwv').hidden = true; $('hwvIn').innerHTML = ''; hwRev++;
+  S = seed(); S.screen.plan = keep; save(); scrPush(); if (g === 2) hwCall('pinLock');
+  hwRefresh(); renderBody(); renderAll();   // native and JS agree on what is limited; the homework log copy comes back from the phone
 };
 
 /* ------------------------------------------------------------------ sheets */
-let prevFocus = null;
+let prevFocus = null, sheetOnClose = null;   // sheetOnClose: runs once when the open sheet closes or is replaced
 function openSheet(html, bind) {
+  const f = sheetOnClose; sheetOnClose = null; if (f) f();
   prevFocus = document.activeElement;
   $('sheet').innerHTML = html.replace('<h2>', '<h2 id="sheetTitle">'); $('sheetbg').classList.add('open'); bind($('sheet'));
   const first = $('sheet').querySelector('input, select, button'); if (first) setTimeout(() => first.focus(), 50);
@@ -617,10 +653,11 @@ function openSheet(html, bind) {
 const closeSheet = () => {
   if (!$('sheetbg').classList.contains('open')) return;
   $('sheetbg').classList.remove('open');
+  const f = sheetOnClose; sheetOnClose = null; if (f) f();
   if (prevFocus && prevFocus.isConnected) prevFocus.focus({ preventScroll: true });
 };
 $('sheetbg').onclick = e => { if (e.target === $('sheetbg')) closeSheet(); };
-addEventListener('keydown', e => { if (e.key === 'Escape' && (!$('pu').hidden || $('rankup').classList.contains('open') || $('sheetbg').classList.contains('open') || !$('ov').hidden || !$('pd').hidden || !$('wo').hidden)) levelupBack(); });
+addEventListener('keydown', e => { if (e.key === 'Escape' && (!$('pin').hidden || !$('hwv').hidden || !$('pu').hidden || $('rankup').classList.contains('open') || $('sheetbg').classList.contains('open') || !$('ov').hidden || !$('pd').hidden || !$('wo').hidden)) levelupBack(); });
 
 function habitSheet() {
   let pick = ALL.slice();
@@ -848,6 +885,11 @@ const ACH = [
   { id: 'irl60', name: 'Off the Grid', desc: '1 hour phone-free in a day', coins: 100, only: () => irlCan(), test: () => irlLedger().maxV >= 60 },
   { id: 'grass7', name: 'Grass Toucher', desc: '7-day Touch Grass streak', coins: 300, only: () => irlCan(), test: () => irlLedger().grassBest >= 7 },
   { id: 'irl600', name: 'Ghost Mode', desc: '10 hours phone-free', coins: 500, only: () => irlCan(), test: () => irlLedger().vmin >= 600 },
+  // HOMEWORK MODE (Android): only sessions finished with proof count, never one a parent ended or with the blocker switched off
+  { id: 'hw1', name: 'Proof Positive', desc: 'Finish homework mode with proof', coins: 25, only: () => hwOn(), test: () => hwLedger().done >= 1 },
+  { id: 'hw60', name: 'Deep Focus', desc: 'A 60-minute homework session', coins: 75, only: () => hwOn(), test: () => hwLedger().long >= 60 },
+  { id: 'hw5', name: 'Study Streak', desc: '5 homework days in a row', coins: 150, only: () => hwOn(), test: () => hwLedger().best >= 5 },
+  { id: 'hw20', name: 'Honour Roll', desc: 'Finish 20 homework sessions', coins: 300, only: () => hwOn(), test: () => hwLedger().done >= 20 },
 ];
 function unlock(id) {
   if (S.ach[id]) return;
@@ -858,7 +900,7 @@ function checkAchievements() { for (const a of ACH) if (!S.ach[a.id] && a.test &
 
 // coins are earned from what you did (so un-ticking a quest takes its coins back) minus what you spent
 const coins = () => checkins() * 10 + clearDays() * 50 + Object.keys(S.bossWins).length * BOSS_COINS
-  + ACH.reduce((a, x) => a + (S.ach[x.id] ? x.coins : 0), 0) + woLedger().coins + scrLedger().coins + dlyLedger().coins + irlLedger().coins + S.bank - S.spent;
+  + ACH.reduce((a, x) => a + (S.ach[x.id] ? x.coins : 0), 0) + woLedger().coins + scrLedger().coins + dlyLedger().coins + irlLedger().coins + hwLedger().coins + S.bank - S.spent;
 let shownCoins = null;
 function renderCoins() {
   const c = coins(); $('coinsN').textContent = c.toLocaleString();
@@ -904,7 +946,7 @@ function renderLocker() {
   const shown = ACH.filter(a => ((!a.android || scrOn()) && (!a.only || a.only())) || S.ach[a.id]), got = shown.filter(a => S.ach[a.id]).length;
   $('trophyCount').textContent = `${got}/${shown.length}`;
   const earn = [[`${IRL.V}/min`, 'phone-free (I\'m bored)'], ['+10', 'per quest'], ['+50', 'clear your day'], ['50', 'max per workout'], ['+250', 'beat the boss'],
-    ...(scrOn() || scrLedger().coins > 0 ? [['60', 'max a day under your screen limit']] : []), ['10+', 'per Daily check-in'], [`+${CHECKIN_PAY}`, `${CHECKIN_N} check-ins a day`], ['25+', 'per trophy']];
+    ...(scrOn() || scrLedger().coins > 0 ? [['60', 'max a day under your screen limit']] : []), ...(hwOn() || hwLedger().coins > 0 ? [[`${HW.BASE}+`, 'homework done, with proof']] : []), ['10+', 'per Daily check-in'], [`+${CHECKIN_PAY}`, `${CHECKIN_N} check-ins a day`], ['25+', 'per trophy']];
   $('walletHow').innerHTML = `<span class="label">How to earn</span>` + earn.map(([v, t]) => `<span><b>${v}</b>${t}</span>`).join('');
   $('trophies').innerHTML = shown.map(a => `<div class="trophy${S.ach[a.id] ? '' : ' locked'}"><div class="medal">${TROPHY}</div><b>${esc(a.name)}</b><small>${esc(a.desc)}<br>+${a.coins} coins</small></div>`).join('');
   $('skins').querySelectorAll('[data-skin]').forEach(b => b.onclick = () => shop('skins', 'skin', b.dataset.skin, +b.dataset.price, b));
@@ -1613,10 +1655,45 @@ function scrCall(name, arg) {   // never throws; JSON in, JSON out
   catch (e) { return null; }
 }
 // native works out each day's rule with the same "last from <= day" rule, so tomorrow's change starts at midnight by itself
-function scrPush() {
-  if (!scrOn()) return;
+function scrPush() {   // false: native refused it (looser while a parent's PIN is set and wasn't typed)
+  if (!scrOn()) return true;
   // the whole plan (it is trimmed to ~8 days), so any clock setting finds the right rule
-  try { LevelUpAndroid.setScreenTimeConfig(JSON.stringify({ v: 1, plan: S.screen.plan })); } catch (e) {}
+  try { return LevelUpAndroid.setScreenTimeConfig(JSON.stringify({ v: 1, plan: S.screen.plan })) !== false; } catch (e) { return true; }
+}
+// B limits less than A on today or a later day either names: a higher limit, none, or an app taken off (native: ScreenTime.looser)
+function scrLooser(A, B) {
+  const t = today(), at = (P, k) => { let e = null; for (const p of P) if (p.from <= k && (!e || p.from >= e.from)) e = p; return e; };
+  for (const k of new Set([t, ...A.concat(B).map(p => p.from).filter(f => f > t)])) {
+    const o = at(A, k), n = at(B, k);
+    if (!o || !(o.limit > 0) || !o.apps.length) continue;
+    if (!n || !(n.limit > 0) || !n.apps.length || n.limit > o.limit || !o.apps.every(p => n.apps.includes(p))) return true;
+  }
+  return false;
+}
+// a parent's PIN for loosening, when one is set: 2 typed just now (lock it again after), 1 not needed, 0 cancelled
+async function scrGate() {
+  if (!hwOn()) return 1;
+  hwRefresh();
+  if (!hw.st || !hw.st.pin || hw.st.parent) return 1;
+  return (await pinAsk({ title: 'Parent PIN', sub: 'A higher screen time limit, Off, or taking an app off the list needs a parent.' })) ? 2 : 0;
+}
+// every change to the plan: fn edits S.screen.plan (false: cancelled). Loosening asks for the PIN first, when one is set
+async function scrChange(fn) {
+  const before = JSON.stringify(S.screen.plan);
+  if (fn() === false) return;
+  let g = 1;
+  if (hwOn() && scrLooser(JSON.parse(before), S.screen.plan)) {
+    const after = JSON.stringify(S.screen.plan);
+    S.screen.plan = JSON.parse(before);
+    if (!(g = await scrGate())) { scrRepaint(); return; }
+    S.screen.plan = JSON.parse(after);
+  }
+  Sound.tap(); buzz(8);
+  if (scrAfter() === false) {   // native said no after all: back to what it has
+    S.screen.plan = JSON.parse(before); scrAfter(); Sound.nope();
+    showNote('That needs a parent', "A parent's PIN is set, so a higher limit or taking apps off waits for them.", HOURGLASS, 'Screen time');
+  }
+  if (g === 2) hwCall('pinLock');
 }
 // the commitment survives Erase all and Import: while the blocker is on, today's rule can only get stricter, and
 // anything looser starts tomorrow (native enforces the same). P: a plan that is about to replace S.screen.plan
@@ -1790,42 +1867,45 @@ function scrNxMake() {
   const c = scrAt(today()); n = { from: ymd(addDays(new Date(), 1)), limit: c.limit, apps: [...c.apps] };
   S.screen.plan.push(n); return n;
 }
-function scrAfter() {
+function scrAfter() {   // false: native refused the plan (see scrChange)
   const P = S.screen.plan, t = today();
   for (let i = P.length - 1; i > 0; i--) {   // drop an entry that changes nothing (a cancelled change, a no-op copy)
     if (P[i].from >= t && P[i].limit === P[i - 1].limit && sameApps(P[i].apps, P[i - 1].apps) && P[i - 1].from <= t) P.splice(i, 1);
   }
-  save(); scrPush(); scrRefresh(true); renderScreen(); scrRepaint(); afterChange();
+  save(); const ok = scrPush(); scrRefresh(true); renderScreen(); scrRepaint(); afterChange();
+  return ok;
 }
 function scrSetLimit(v) {
-  const c0 = scrAt(today()), nx = scrNext();
-  if (!c0) { if (nx) nx.limit = v; Sound.tap(); scrAfter(); return; }   // the plan hasn't started: change it freely
-  if (v > 0 && (!c0.limit || v <= c0.limit)) {
-    const used = scrUsed();
-    if (scrBlocker() && c0.apps.length && used >= v && !(c0.limit && used >= c0.limit)
-      && !confirm(`You've used ${used} min today. A ${limName(v)} limit locks your apps right now. Set it?`)) return;
-    scrCur().limit = v; if (nx) nx.limit = v;   // also cancels a raise waiting for tomorrow
-  } else if (v !== c0.limit) scrNxMake().limit = v;
-  else if (nx) nx.limit = v;
-  Sound.tap(); buzz(8); scrAfter();
+  scrChange(() => {
+    const c0 = scrAt(today()), nx = scrNext();
+    if (!c0) { if (nx) nx.limit = v; return; }   // the plan hasn't started: change it freely (a parent's PIN for a raise)
+    if (v > 0 && (!c0.limit || v <= c0.limit)) {
+      const used = scrUsed();
+      if (scrBlocker() && c0.apps.length && used >= v && !(c0.limit && used >= c0.limit)
+        && !confirm(`You've used ${used} min today. A ${limName(v)} limit locks your apps right now. Set it?`)) return false;
+      scrCur().limit = v; if (nx) nx.limit = v;   // also cancels a raise waiting for tomorrow
+    } else if (v !== c0.limit) scrNxMake().limit = v;
+    else if (nx) nx.limit = v;
+  });
 }
 function scrToggle(pkg) {
-  const c0 = scrAt(today()), nx = scrNext(), app = (scr.apps || []).find(a => a.pkg === pkg);
-  if (!c0) { if (nx) nx.apps = nx.apps.includes(pkg) ? nx.apps.filter(p => p !== pkg) : [...nx.apps, pkg]; }
-  else if (c0.apps.includes(pkg)) {
-    if (!nx || nx.apps.includes(pkg)) { const n = scrNxMake(); n.apps = n.apps.filter(p => p !== pkg); }   // removal: from tomorrow
-    else nx.apps.push(pkg);   // undo a waiting removal
-  } else {   // adding counts right away
-    const used = scrUsed(), m = app ? app.min || 0 : 0;
-    if (scrBlocker() && c0.limit && used < c0.limit && used + m >= c0.limit
-      && !confirm(`${app ? app.name : 'This app'} has ${m} min today, so you'd be at ${used + m} of ${c0.limit} min and your apps lock right now. Add it?`)) return;
-    scrCur().apps.push(pkg); if (nx && !nx.apps.includes(pkg)) nx.apps.push(pkg);
-  }
-  Sound.tap(); buzz(8); scrAfter();
+  scrChange(() => {
+    const c0 = scrAt(today()), nx = scrNext(), app = (scr.apps || []).find(a => a.pkg === pkg);
+    if (!c0) { if (nx) nx.apps = nx.apps.includes(pkg) ? nx.apps.filter(p => p !== pkg) : [...nx.apps, pkg]; }
+    else if (c0.apps.includes(pkg)) {
+      if (!nx || nx.apps.includes(pkg)) { const n = scrNxMake(); n.apps = n.apps.filter(p => p !== pkg); }   // removal: from tomorrow
+      else nx.apps.push(pkg);   // undo a waiting removal
+    } else {   // adding counts right away
+      const used = scrUsed(), m = app ? app.min || 0 : 0;
+      if (scrBlocker() && c0.limit && used < c0.limit && used + m >= c0.limit
+        && !confirm(`${app ? app.name : 'This app'} has ${m} min today, so you'd be at ${used + m} of ${c0.limit} min and your apps lock right now. Add it?`)) return false;
+      scrCur().apps.push(pkg); if (nx && !nx.apps.includes(pkg)) nx.apps.push(pkg);
+    }
+  });
 }
 function scrLoadApps() {
   const r = scrCall('screenTimeApps');
-  if (r && r.ok && Array.isArray(r.apps)) scr.apps = r.apps.filter(a => a && typeof a.pkg === 'string' && a.pkg !== 'app.levelup').map(a => ({ pkg: a.pkg, name: String(a.name || a.pkg), min: a.min | 0, suggest: !!a.suggest, icon: typeof a.icon === 'string' && /^data:image\//.test(a.icon) ? a.icon : '' }));
+  if (r && r.ok && Array.isArray(r.apps)) scr.apps = r.apps.filter(a => a && typeof a.pkg === 'string' && a.pkg !== 'app.levelup').map(a => ({ pkg: a.pkg, name: String(a.name || a.pkg), min: a.min | 0, suggest: !!a.suggest, edu: !!a.edu, icon: typeof a.icon === 'string' && /^data:image\//.test(a.icon) ? a.icon : '' }));
   // setup made the plan while the list wouldn't load: tick the suggested apps now (adding apps applies at once)
   if (scr.apps && scr.autoEmpty) {
     scr.autoEmpty = false;
@@ -1904,11 +1984,10 @@ function bindSetup(el) {
   const ra = el.querySelector('[data-retry-apps]');
   if (ra) ra.onclick = () => { Sound.tap(); if (!scrLoadApps()) showNote("Couldn't load your apps", 'Try again in a bit, or pick them later in Screen time.', HOURGLASS, 'Screen time'); scrRefresh(true); renderScreen(); scrRepaint(); };
   const go = el.querySelector('[data-done]'); if (go) go.onclick = () => { Sound.tap(); closeSheet(); };
-  el.querySelectorAll('[data-when]').forEach(b => b.onclick = () => {
-    const P = S.screen.plan; if (P.length !== 1) return;
+  el.querySelectorAll('[data-when]').forEach(b => b.onclick = () => scrChange(() => {
+    const P = S.screen.plan; if (P.length !== 1) return false;
     P[0].from = b.dataset.when === 'tomorrow' ? ymd(addDays(new Date(), 1)) : today();   // back to today is a tightening: allowed any time
-    Sound.tap(); scrAfter();
-  });
+  }));
 }
 function setupSheet() {
   scrRefresh(true); scrEnsurePlan();
@@ -1950,7 +2029,7 @@ function settingsHTML() {
     <div class="wk-tip" aria-live="polite">${esc(wkKey ? tip(wkKey) : run >= 2 ? `${run} days under in a row · tap a day` : 'Tap a day to see it')}</div>
     <span class="label">Daily limit</span>
     <div class="lim">${lims}</div>${pend}
-    <p class="rule-note">Lower limits start now. Higher limits and Off start tomorrow, so you can't cave at 10pm.</p>
+    <p class="rule-note">Lower limits start now. Higher limits and Off start tomorrow, so you can't cave at 10pm.${hwOn() && hw.st && hw.st.pin ? " A parent's PIN is set: raising, Off and taking apps off need it." : ''}</p>
     <span class="label">Apps that count · ${picked.length}</span>
     ${search}<div data-alist>${scrListHTML()}</div>
     <p class="rule-note">Adding an app counts right away. Removing one still counts till midnight. For coins, unpicked games and video apps count too.</p>
@@ -1984,7 +2063,7 @@ function bindSettings(el) {
   bindList(el);
   const on = (sel, f) => { const b = el.querySelector(sel); if (b) b.onclick = f; };
   on('[data-keep]', () => scrSetLimit(scrAt(today()).limit));
-  on('[data-now]', () => { const n = scrNext(); if (n && !scrAt(today())) { n.from = today(); Sound.tap(); scrAfter(); } });
+  on('[data-now]', () => scrChange(() => { const n = scrNext(); if (!n || scrAt(today())) return false; n.from = today(); }));
   on('[data-fix]', () => { Sound.tap(); setupSheet(); });
   const s = el.querySelector('.search');
   if (s) s.oninput = () => { stList.q = s.value; const box = el.querySelector('[data-alist]'); if (box) { box.innerHTML = scrListHTML(); bindList(box); } };
@@ -2030,11 +2109,14 @@ function scrRepaint() {
   if (f) { f.focus({ preventScroll: true }); if (f.classList.contains('search')) f.setSelectionRange(f.value.length, f.value.length); }
 }
 // native calls these: on every return to the app (from Settings or a limited app), and from the block screen
-window.levelupScreenTimeChanged = () => { if (!scrOn()) return; scrRefresh(true); renderScreen(); scrRepaint(); afterChange(); };
+window.levelupScreenTimeChanged = () => {
+  if (hwOn()) { hwRefresh(); renderHw(); hwRepaint(); hwTicker(); }   // homework: back from Settings (the blocker) or an allowed app
+  if (!scrOn()) return; scrRefresh(true); renderScreen(); scrRepaint(); afterChange();
+};
 window.levelupOpenWorkout = () => {
   if (!$('wo').hidden && $('wo').classList.contains('res')) claimResults();
-  $('rankup').classList.remove('open'); closeSheet();
-  ovClose(); puClose();   // a Daily screen or the push-up screen left open would sit on top of the workout
+  $('rankup').classList.remove('open'); closeSheet(); pinDone(false);
+  ovClose(); puClose(); if (hv) hvClose();   // a Daily screen, the push-up or homework screen left open would sit on top of the workout
   if (!$('v-home').classList.contains('on')) document.querySelector('.nav button[data-v=home]').click();
   S.workout ? openWorkout() : pickSheet();
 };
@@ -2120,6 +2202,7 @@ const unlLeft = () => { const u = scr.st && +scr.st.unlockUntil; return u > Date
 // null when an unlock can be had right now, else why not. Native checks again and has the last word.
 function puCan() {
   if (!puBridge()) return 'demo';
+  if (hwActive()) return 'homework';
   const st = scr.st || {}, cur = scrAt(today());
   if (unlLeft()) return 'active';
   if (!(st.unlocksLeft > 0)) return 'none_left';
@@ -2127,6 +2210,7 @@ function puCan() {
   return null;
 }
 const PU_WHY = {
+  homework: () => 'Homework mode is on. Finish your homework first: then your apps unlock.',
   active: () => `You're unlocked: ${Math.ceil(unlLeft() / 60e3)} min left.`, none_left: () => 'No unlocks left today. You get 2 again at midnight.',
   not_over: () => "You're not over your limit, so there's nothing to unlock.", failed: () => "Couldn't unlock. Try again.",
 };
@@ -2628,8 +2712,28 @@ function ovClose() {
 const ovTop = (mid = '', right = '<span></span>') => `<div class="pu-top"><button class="pu-x" data-o="close" aria-label="Close">${X_ICON}</button><div class="mid">${mid}</div>${right}</div>`;
 function ovRender() {
   const o = ov, el = $('ovIn'); let h = '';
-  $('ov').className = `pu ov ${o.kind}${o.proof ? ' proof' : ''}${['cam', 'review', 'view', 'pview'].includes(o.step) ? ' live' : ''}`;
-  if (o.step === 'cam') {
+  $('ov').className = `pu ov ${o.kind}${o.proof ? ' proof' : ''}${o.hw ? ' hwc' : ''}${['cam', 'review', 'view', 'pview', 'hview'].includes(o.step) ? ' live' : ''}`;
+  if (o.step === 'cam' && o.hw) {   // homework proof: a live photo only (no gallery, no timer), the back camera first
+    h = ovTop('<b>Snap your homework</b><span>Live photo</span>')
+      + `<div class="pu-stage fcam${o.mirror ? ' mirror' : ''}" data-load="${o.ready ? 0 : 1}"><video id="ovVid" playsinline muted></video><div class="fc-num" id="fcNum" aria-hidden="true"></div><div class="fc-flash" id="fcFlash"></div>
+        <div class="pu-load"><i></i>Starting the camera...</div></div>
+      <div class="fc-ctl"><span class="fc-side" aria-hidden="true"></span><button class="fc-shut" id="fcShut" data-o="shoot" aria-label="Take the photo"><i></i></button><button class="fc-side" data-o="flip" aria-label="Switch camera">${FLIP_ICON}</button></div>
+      <p class="fc-tip" id="fcTip">Fill the frame with your finished work</p><p class="sr" id="fcSay" aria-live="assertive"></p>`;
+  } else if (o.step === 'review' && o.hw) {
+    const junk = o.junk === 'dark' ? "Too dark to see anything. Turn a light on and retake it." : o.junk ? "That looks blank. Point the camera at your finished work so it fills the frame." : '';
+    h = ovTop('<b>Your homework</b><span>Can you read it?</span>') + `<div class="pu-stage fpic"><img src="${o.url}" alt="Your homework photo"></div>
+      ${junk ? `<p class="hw-junk" role="alert">${junk}</p>` : ''}
+      <div class="pu-act">${junk ? '<button class="go" data-o="retake">Retake</button>' : '<button class="go" data-o="hwuse">Use this photo</button><button class="ghost" data-o="retake">Retake</button>'}</div>`;
+  } else if (o.step === 'hview') {
+    const e = S.hw.log.find(x => x.id === o.hwe);
+    h = ovTop(e ? `<b>${esc(e.n || 'Homework')}</b><span>${fmtDate(ymd(new Date(e.t0)), { weekday: 'long', day: 'numeric', month: 'short' })}</span>` : '<b>Homework</b>')
+      + `<div class="pu-stage fpic">${e && e.ph ? `<span class="ph big">${BOOK}<img data-fit="${esc(e.ph)}" data-sz="full" alt="Homework photo"></span>` : ''}</div>
+      <div class="pu-act"><div class="pair2"><button class="ghost" data-o="hwdel">Delete</button><button class="go" data-o="close">Done</button></div><p class="pu-fine">Deleting needs a parent's PIN.</p></div>`;
+  } else if (o.step === 'err' && o.hw) {
+    const E = { denied: ["Camera's off", 'Homework proof needs the camera. Allow it in App info > Permissions > Camera.'], busy: ['Camera busy', 'Another app is using the camera. Close it and try again.'], nocam: ['No camera', "Couldn't start a camera on this phone. A parent can end homework mode with the PIN."] }[o.err] || ['No camera', ''];
+    h = ovTop() + `<div class="pu-body"><div class="wo-kick">Homework proof</div><h2 class="pu-hd sm">${E[0]}</h2><p class="pu-sub">${E[1]} It has to be a live photo, not one from your gallery.</p></div>
+      <div class="pu-act">${o.err === 'denied' && scrOn() ? '<button class="go" data-o="settings">Open settings</button>' : ''}${o.err === 'nocam' ? '' : `<button class="${o.err === 'denied' && scrOn() ? 'ghost' : 'go'}" data-o="retake">Try again</button>`}<button class="ghost" data-o="close">Close</button></div>`;
+  } else if (o.step === 'cam') {
     h = ovTop(`<b>${o.proof ? 'Snap proof' : 'Snap your fit'}</b><span id="fcTm">${S.fitCam.timer ? `${S.fitCam.timer}s timer` : 'No timer'}</span>`)
       + `<div class="pu-stage fcam${o.mirror ? ' mirror' : ''}" data-load="${o.ready ? 0 : 1}"><video id="ovVid" playsinline muted></video><div class="fc-num" id="fcNum" aria-hidden="true"></div><div class="fc-flash" id="fcFlash"></div>
         <div class="pu-load"><i></i>Starting the camera...</div></div>
@@ -2666,7 +2770,7 @@ function ovRender() {
         ${o.run ? '<button class="ghost" data-o="brstop">Stop</button>' : done ? '<button class="go" data-o="close">Done</button><button class="ghost" data-o="brgo">Again</button>' : '<button class="go" data-o="brgo">Start</button>'}</div>`;
   }
   el.innerHTML = h;
-  if (o.step === 'view' || o.step === 'pview') hydrate(el);
+  if (o.step === 'view' || o.step === 'pview' || o.step === 'hview') hydrate(el);
   if (o.step === 'cam' && o.stream) { const v = $('ovVid'); v.srcObject = o.stream; v.play().catch(() => {}); }
   if (o.step !== 'cam') el.focus({ preventScroll: true });
 }
@@ -2677,9 +2781,11 @@ $('ovIn').onclick = e => {
   if (a === 'close') ovClose();
   else if (a === 'shoot') camShoot();
   else if (a === 'tm') { if (o.t0) camCancel(); S.fitCam.timer = +b.dataset.t; save(); camPaint(); }
-  else if (a === 'flip') { if (o.t0) camCancel(); S.fitCam.facing = S.fitCam.facing === 'user' ? 'environment' : 'user'; save(); camStart(); }
-  else if (a === 'pick' || a === 'repick') $('fitFile').click();
-  else if (a === 'retake') camOpen(o.proof);
+  else if (a === 'flip') { if (o.t0) camCancel(); if (o.hw) o.facing = o.facing === 'user' ? 'environment' : 'user'; else { S.fitCam.facing = S.fitCam.facing === 'user' ? 'environment' : 'user'; save(); } camStart(); }
+  else if ((a === 'pick' || a === 'repick') && !o.hw) $('fitFile').click();
+  else if (a === 'retake') camOpen(o.proof, o.hw);
+  else if (a === 'hwuse') hwUse();
+  else if (a === 'hwdel') hwDelete(o.hwe);
   else if (a === 'settings') { let ok = false; try { ok = LevelUpAndroid.openScreenTimeSettings('appinfo') === true; } catch (e) {} if (!ok) showNote("Couldn't open Settings", 'Open Settings > Apps > LEVEL UP > Permissions', FIT_NOTE, 'Camera'); }
   else if (a === 'vibe') {
     Sound.tap(); const v = b.dataset.v, f = o.step === 'view' && S.fits.find(x => x.id === o.id);
@@ -2699,7 +2805,8 @@ $('ovIn').onclick = e => {
 const FIT_NOTE = dIcon('fit');
 
 /* camera: front by default (prop the phone, step back), a self-timer, the photo saved the right way round (not mirrored) */
-function camOpen(proof) { ovOpen({ kind: 'fit', step: 'cam', ready: false, ...(proof ? { proof } : {}) }); camStart(); }   // proof: a Phone Down's id
+// proof: a Phone Down's id; hw: the homework session's (live only, the back camera, no timer)
+function camOpen(proof, hw) { ovOpen({ kind: 'fit', step: 'cam', ready: false, ...(proof ? { proof } : {}), ...(hw ? { hw, facing: 'environment' } : {}) }); camStart(); }
 async function camStart() {
   const o = ov; if (!o) return;
   if (o.stream) { o.stream.getTracks().forEach(t => t.stop()); o.stream = null; }
@@ -2707,13 +2814,14 @@ async function camStart() {
   Object.assign(o, { step: 'cam', ready: false, err: null }); ovRender();
   try {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw Object.assign(new Error('no camera API'), { name: 'NotFoundError' });
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: S.fitCam.facing }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+    const facing = o.hw ? o.facing : S.fitCam.facing;
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
     if (id !== ovRun || ov !== o) { stream.getTracks().forEach(t => t.stop()); return; }
     // Android's camera dialog hides the page while it asks: allowed, so start again as soon as the page is back
     if (document.hidden) { stream.getTracks().forEach(t => t.stop()); o.paused = true; return; }
     o.stream = stream;
     const tr = stream.getVideoTracks()[0], st = tr && tr.getSettings ? tr.getSettings() : {};
-    o.mirror = (st.facingMode || S.fitCam.facing) === 'user';
+    o.mirror = (st.facingMode || facing) === 'user';
     const v = $('ovVid'); v.srcObject = stream; await v.play();
     if (id !== ovRun || ov !== o) return;
     o.ready = true; wake(true); camPaint();
@@ -2729,6 +2837,7 @@ function camPaint() {   // in place: the video element must never be rebuilt
   const o = ov, el = $('ovIn'); if (!o || o.step !== 'cam' || !el.querySelector('.fcam')) return;
   const stg = el.querySelector('.fcam'); stg.dataset.load = o.ready ? '0' : '1'; stg.classList.toggle('mirror', !!o.mirror);
   el.querySelectorAll('[data-o=tm]').forEach(b => { const on = +b.dataset.t === S.fitCam.timer; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
+  if (o.hw) return;
   $('fcTm').textContent = S.fitCam.timer ? `${S.fitCam.timer}s timer` : 'No timer';
   $('fcShut').classList.toggle('counting', !!o.t0); $('fcShut').setAttribute('aria-label', o.t0 ? 'Cancel the timer' : 'Take the photo');
   $('fcTip').textContent = o.t0 ? 'Tap the button to cancel' : o.proof ? (S.fitCam.timer ? 'Tap, then hold it steady' : 'Tap to snap') : S.fitCam.timer ? 'Prop the phone up, tap, step back, pose' : 'Tap to snap';
@@ -2736,7 +2845,7 @@ function camPaint() {   // in place: the video element must never be rebuilt
 function camShoot() {
   const o = ov; if (!o || !o.ready) return;
   if (o.t0) { camCancel(); Sound.uncheck(); return; }
-  const n = S.fitCam.timer;
+  const n = o.hw ? 0 : S.fitCam.timer;
   if (!n) { camSnap(); return; }
   Sound.tap(); o.t0 = Date.now(); o.last = 0;
   const num = $('fcNum');
@@ -2754,6 +2863,7 @@ function camCancel() { const o = ov; if (!o) return; clearInterval(o.tick); o.ti
 async function camSnap() {
   const o = ov, v = $('ovVid'); if (!o || !v || !v.videoWidth) return;
   const c = grab(v, 1080);   // the frame first, then the camera goes off
+  if (o.hw) o.junk = hwJunk(c);
   const fl = $('fcFlash'); if (fl) { fl.classList.remove('go'); void fl.offsetWidth; fl.classList.add('go'); }
   Sound.shutter(); buzz(40);
   const id = ovRun;
@@ -2761,7 +2871,7 @@ async function camSnap() {
     const full = await jpeg(c, 0.86), thumb = await jpeg(grab(c, 360), 0.78);
     if (ov !== o || id !== ovRun) return;
     ovStop(); toReview({ full, thumb }, 'cam');
-  } catch (e) { showNote("Couldn't take the photo", 'Try again, or pick one from your photos.', FIT_NOTE, 'Daily Fit'); }
+  } catch (e) { showNote("Couldn't take the photo", o.hw ? 'Try again.' : 'Try again, or pick one from your photos.', FIT_NOTE, o.hw ? 'Homework' : 'Daily Fit'); }
 }
 function toReview(p, from) {
   if (ov && ov.url) URL.revokeObjectURL(ov.url);
@@ -2770,7 +2880,7 @@ function toReview(p, from) {
   ovRender();
 }
 $('fitFile').onchange = async e => {
-  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  const f = e.target.files[0]; e.target.value = ''; if (!f || (ov && ov.hw)) return;   // homework proof is live only
   try {
     if (!/^image\//.test(f.type) && !/\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i.test(f.name)) throw new Error('not an image');
     const im = await loadImg(f), p = await shots(im);
@@ -3376,6 +3486,571 @@ $('pf').onclick = e => {
   else if (b.dataset.pf === 'ph') ovOpen({ kind: 'fit', step: 'pview', proof: b.dataset.id });
 };
 
+/* ------------------------------------------------------------------ HOMEWORK MODE: every app locks till homework's done */
+// Native owns it (Homework.java): the session, the time that counted (by time since boot, so changing the clock can't
+// shorten it), the parent's PIN (salted + hashed there, never in localStorage or a backup), the settings and the real log.
+// LimitService blocks every app except the protected ones (calls, texts, Settings, home, camera...) and the parent's allow
+// list. JS only shows and asks. It ends with a LIVE photo of the finished homework once the minimum time is up: a record
+// for the parent to look at, not marking. Coins, the streak and trophies come from the log copy (S.hw.log), proof only.
+const HW = { BASE: 30, PER: 1, DAY: 120, MAX: 4 * 3600e3, MINS: [15, 30, 45, 60, 90], COLOR: '#7cb0ff' };
+const BOOK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 5.2C5 3.9 8.4 3.9 11 5.4v15.1c-2.6-1.4-6-1.4-8.5-.1zm10.5.2c2.6-1.5 6-1.5 8.5-.2v15.1c-2.5-1.3-5.9-1.3-8.5.1z" fill="currentColor"/></svg>';
+const BOOK_IMG = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><circle cx="100" cy="100" r="94" fill="#7cb0ff"/><circle cx="100" cy="100" r="80" fill="#0b1836"/><path d="M42 66c18-9 40-9 54 2v78c-14-10-36-10-54-2zm62 2c14-11 36-11 54-2v78c-18-8-40-8-54 2z" fill="#7cb0ff"/><path d="M80 104l14 14 30-32" fill="none" stroke="#0b1836" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/></svg>');
+const hwOn = () => !!(window.LevelUpAndroid && typeof LevelUpAndroid.homeworkStatus === 'function');
+function hwCall(name, ...a) {   // never throws; JSON out
+  try { const r = LevelUpAndroid[name](...a); return typeof r === 'string' && r ? JSON.parse(r) : r; } catch (e) { return null; }
+}
+let hw = { st: null, at: 0, apps: null, appsKey: '', ended: null };   // live, never saved: st is native's status, read at `at`
+const hwActive = () => !!(hw.st && hw.st.s);
+const hwLeft = () => { const s = hw.st && hw.st.s; return s ? Math.max(0, s.left - Math.max(0, Date.now() - hw.at)) : 0; };
+const hwReady = () => !!(hw.st && hw.st.pin && hw.st.cfg && hw.st.cfg.set);
+
+// reads native's status; the log copy follows the phone's log (a backup's entries from before this log started stay)
+function hwRefresh() {
+  if (!hwOn()) return false;
+  const r = hwCall('homeworkStatus'), prev = hw.st && hw.st.s;
+  if (!r || r.v !== 1 || !r.cfg || typeof r.cfg !== 'object') { hw.st = null; return true; }
+  const c = r.cfg;
+  r.cfg = { min: HW.MINS.includes(c.min) ? c.min : 45, allow: Array.isArray(c.allow) ? c.allow.filter(p => typeof p === 'string') : [], on: !!c.on,
+    days: Array.isArray(c.days) ? c.days.filter(d => Number.isInteger(d) && d >= 0 && d < 7) : [], at: Number.isInteger(c.at) ? c.at : 960, rule: c.rule === 'parent' ? 'parent' : 'photo', set: !!c.set };
+  if (r.s && !(typeof r.s.left === 'number' && r.s.start > 0)) r.s = null;
+  if (r.s) { r.s.allow = Array.isArray(r.s.allow) ? r.s.allow.filter(p => typeof p === 'string') : []; r.s.tp = Array.isArray(r.s.tp) ? r.s.tp : []; }
+  hw.st = r; hw.at = Date.now();
+  const nat = (Array.isArray(r.log) ? r.log : []).map(hwEntry).filter(Boolean), ids = new Set(nat.map(e => e.id)), since = +r.since || 0;
+  const log = S.hw.log.filter(e => since && e.t1 < since && !ids.has(e.id)).concat(nat).sort((a, b) => a.t0 - b.t0).slice(-200);
+  const days = c.on && r.cfg.days.length ? r.cfg.days : [1, 2, 3, 4, 5];
+  let changed = false;
+  if (JSON.stringify(log) !== JSON.stringify(S.hw.log)) { S.hw.log = log; changed = true; }
+  if (days.join() !== S.hw.days.join()) { S.hw.days = days; changed = true; }
+  if (prev && !r.s && S.hw.note) { S.hw.note = ''; changed = true; }
+  if (changed) { hwRev++; save(); }
+  // it ended while LEVEL UP wasn't looking (4 hours, a parent): say so once
+  if (prev && !r.s && hw.ended !== prev.id) {
+    hw.ended = prev.id;
+    const e = S.hw.log.find(x => x.id === prev.id);
+    if (e && e.how === 'time') showNote('Homework mode ended', 'It ran 4 hours, the longest it can. Your apps are unlocked.', BOOK, 'Homework');
+    else if (e && e.how === 'pin') showNote('Homework mode ended', 'A parent ended it. Your apps are unlocked.', BOOK, 'Homework');
+  }
+  return true;
+}
+
+// the ledger: 30 coins + 1 a minute for a session finished with proof, 120 a day; a streak of homework days (the schedule's
+// days, else Mon-Fri; other days never break it). A parent-ended session, or one with the blocker off or the clock changed, never pays.
+let hwRev = 0, hwMemo = null;   // hwRev++ on every write to S.hw (erase/import replace S, which also invalidates)
+const hwBad = e => e.tp.some(t => t[1] === 'off' || t[1] === 'clock');
+const hwPays = e => e.how === 'proof' && !hwBad(e) && e.t1 - e.t0 <= HW.MAX + 10 * 60e3;
+function hwLedger() {
+  const t = today();
+  if (hwMemo && hwMemo.rev === hwRev && hwMemo.s === S && hwMemo.t === t) return hwMemo.v;
+  const days = {}, per = {}; let coins = 0, done = 0, long = 0;
+  for (const e of S.hw.log.slice().sort((a, b) => a.t1 - b.t1)) {
+    if (!hwPays(e)) continue;
+    const k = ymd(new Date(e.t1)), d = days[k] || (days[k] = { c: 0, n: 0, m: 0 }), c = Math.max(0, Math.min(HW.BASE + e.m * HW.PER, HW.DAY - d.c));
+    d.c += c; d.n++; d.m += e.m; coins += c; done++; per[e.id] = c; long = Math.max(long, e.m);
+  }
+  const hd = new Set(S.hw.days);
+  let run = 0, d = new Date();
+  for (let i = 0; i < 400; i++, d = addDays(d, -1)) { const k = ymd(d); if (days[k]) run++; else if (i && hd.has(d.getDay())) break; }
+  let best = 0, x = 0;
+  const ks = Object.keys(days).sort();
+  if (ks.length) for (let d2 = new Date(ks[0] + 'T12:00:00'); ymd(d2) <= t; d2 = addDays(d2, 1)) { const k = ymd(d2); if (days[k]) best = Math.max(best, ++x); else if (k !== t && hd.has(d2.getDay())) x = 0; }
+  const v = { coins, done, long, run, best, days, per, today: days[t] || { c: 0, n: 0, m: 0 } };
+  hwMemo = { rev: hwRev, s: S, t, v };
+  return v;
+}
+const hwPay = min => Math.max(0, Math.min(HW.BASE + min * HW.PER, HW.DAY - hwLedger().today.c));   // today, if it's finished at the minimum
+const hwWhen = t => { const k = ymd(new Date(t)); return k === today() ? clockAt(t) : k === ymd(addDays(new Date(), 1)) ? `tomorrow ${clockAt(t)}` : `${DAY_NAME[new Date(t).getDay()]} ${clockAt(t)}`; };
+const hwHM = at => clockAt(new Date(2026, 0, 5, Math.floor(at / 60), at % 60).getTime());
+function hwDaysName(days) {
+  const s = [...days].sort().join();
+  return s === '1,2,3,4,5' ? 'Mon–Fri' : s === '0,1,2,3,4,5,6' ? 'Every day' : s === '0,6' ? 'Weekends' : [1, 2, 3, 4, 5, 6, 0].filter(d => days.includes(d)).map(d => DAY_NAME[d]).join(', ');
+}
+// the allowed apps with names and icons (native: launchable ones only), fetched when the list changes
+function hwApps() {
+  const s = hw.st && (hw.st.s ? hw.st.s.allow : hw.st.cfg.allow), key = s ? s.join() : '';
+  if (hw.apps && hw.appsKey === key) return hw.apps;
+  const r = key ? hwCall('homeworkAllowed') : { ok: true, apps: [] };
+  hw.apps = r && r.ok && Array.isArray(r.apps) ? r.apps.filter(a => a && typeof a.pkg === 'string').map(a => ({ pkg: a.pkg, name: String(a.name || a.pkg), icon: typeof a.icon === 'string' && /^data:image\//.test(a.icon) ? a.icon : '' })) : [];
+  hw.appsKey = key;
+  return hw.apps;
+}
+const hwNames = (n = 3) => { const a = hwApps(); return a.length ? a.slice(0, n).map(x => x.name).join(', ') + (a.length > n ? ` + ${a.length - n} more` : '') : ''; };
+const hwIcon = a => `<span class="ai">${a.icon ? `<img src="${a.icon}" alt="">` : esc((a.name.trim()[0] || '?').toUpperCase())}</span>`;
+
+/* Home: the HOMEWORK card. Set up / idle / scheduled: a slab under screen time. Running: at the top, with the countdown */
+let hwCardT = 0;
+function renderHw() {
+  const el = $('hw');
+  clearTimeout(hwCardT);
+  if (!hwOn() || !hw.st) { el.hidden = true; $('hwOpen').hidden = !hwOn(); return; }
+  $('hwOpen').hidden = false;
+  el.hidden = false;
+  const st = hw.st, s = st.s, at = s ? $('card') : $('dstrip');
+  if (el.nextElementSibling !== at) $('v-home').insertBefore(el, at);
+  if (!s) {
+    const L = hwLedger(), streak = L.run >= 2 ? ` · ${L.run} day streak` : '';
+    const sm = !hwReady() ? 'Locks games till homework is done · a parent sets it up'
+      : !st.blocker ? "Blocker's off, so it can't lock anything. Tap to fix"
+      : st.next && st.next <= Date.now() + 60e3 ? 'Starting now'
+      : st.done ? `Done for today${st.next ? ` · next ${hwWhen(st.next)}` : ''}${streak}`
+      : st.next ? `Starts ${hwWhen(st.next)} · ${st.cfg.min} min${streak}` : `Start homework · +${hwPay(st.cfg.min)} coins${streak}`;
+    el.className = `hw setup${st.done ? ' done' : ''}`;
+    el.innerHTML = `<span class="ic">${BOOK}</span><span class="tx"><b>Homework mode</b><small>${esc(sm)}</small></span>${CHEV_R}`;
+    el.setAttribute('aria-label', `Homework mode: ${sm}`);
+    if (st.next > Date.now()) hwCardT = setTimeout(() => { hwRefresh(); renderHw(); hwTicker(); }, Math.min(st.next - Date.now() + 1500, 30 * 60e3));
+    return;
+  }
+  const left = hwLeft(), m = Math.ceil(left / 60e3), names = hwNames();
+  el.className = `hw live${left ? '' : ' ready'}${s.off ? ' warn' : ''}`;
+  el.innerHTML = `<div class="hw-top"><span class="label">${BOOK}Homework mode</span><span class="of">${s.why === 's' ? 'Scheduled · ' : 'Since '}${clockAt(s.start)}</span></div>
+    <div class="hw-hd" id="hwHd">${left ? `<b>${m}</b><span>min to go</span>` : '<b>Done?</b><span>Prove it</span>'}</div>
+    <div class="hw-al">${names ? `Allowed: ${esc(names)}` : 'Allowed: calls, texts and the camera'}</div>
+    ${left ? '' : `<button class="hw-fin" data-hw="fin">${CAM_ICON}Finish &amp; prove it</button>`}
+    ${s.off ? `<div class="scr-warn"><span>Blocker's off, so nothing's locked.</span><button class="act" data-hw="fix">Turn on</button></div>` : ''}`;
+  el.setAttribute('aria-label', left ? `Homework mode: ${m} minutes to go. Open it` : 'Homework mode: time is up. Finish with a photo of your homework');
+}
+$('hw').onclick = e => {
+  const b = e.target.closest('[data-hw]');
+  Sound.tap();
+  if (b && b.dataset.hw === 'fin') { e.stopPropagation(); hwFinish(); return; }
+  if (b && b.dataset.hw === 'fix') { e.stopPropagation(); scrOpenSettings('accessibility'); return; }
+  if (!hwReady() || (!hwActive() && !hw.st.blocker)) hwSetup(); else hvOpen();
+};
+$('hw').onkeydown = e => { if (e.target === $('hw') && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); $('hw').click(); } };
+$('hwOpen').onclick = () => { Sound.tap(); hwRefresh(); hwReady() ? hwParent() : hwSetup(); };
+
+// one second ticks while a session runs: the countdowns in place; native is read again every 30 s and when time's up
+let hwT = null;
+function hwTicker() { const want = hwActive(); if (want && !hwT) hwT = setInterval(hwTick, 1000); else if (!want && hwT) { clearInterval(hwT); hwT = null; } }
+function hwTick() {
+  if (document.hidden) return;
+  if (!hwActive()) { hwTicker(); return; }
+  const left = hwLeft();
+  if (Date.now() - hw.at > 30e3 || Date.now() < hw.at || (!left && hw.st.s.left > 0)) { hwRefresh(); renderHw(); hwRepaint(); hwTicker(); return; }
+  const m = Math.ceil(left / 60e3), hd = $('hwHd');
+  if (hd && left) { const b = hd.querySelector('b'); if (b && b.textContent !== String(m)) b.textContent = m; }
+  hvPaint();
+}
+
+/* the HOMEWORK screen (#hwv): idle (start, the log), live (countdown, allowed apps, FINISH & PROVE IT), res. Below the camera */
+let hv = null;   // the open screen (never saved): {step: 'idle' | 'live' | 'res', ...}
+function hvOpen() {
+  closeSheet(); hwRefresh();
+  hv = { step: hwActive() ? 'live' : 'idle' }; $('hwv').hidden = false; hvRender(); hwTicker();
+}
+function hvClose() { hv = null; $('hwv').hidden = true; $('hwvIn').innerHTML = ''; renderHw(); }
+function hvBack() {   // Back on a running session: the screen hides, homework keeps going, Home shows
+  const live = hv && hv.step === 'live' && hwActive();
+  hvClose();
+  if (live && !$('v-home').classList.contains('on')) document.querySelector('.nav button[data-v=home]').click();
+}
+const hvSig = () => { const s = hw.st && hw.st.s; return JSON.stringify([hv && hv.step, !!s, s && !hwLeft(), s && s.off, s && s.ph, s && s.allow.join(), hw.st && hw.st.blocker, hw.st && hw.st.parent, S.hw.log.length]); };
+let hvWas = '';
+function hwRepaint() {   // after a refresh: the open screen follows the session (keeping the note field when nothing changed)
+  if (!hv) return;
+  if (hv.step === 'live' && !hwActive()) hv = { step: 'idle' };
+  else if (hv.step === 'idle' && hwActive()) hv = { step: 'live' };
+  if (hvSig() !== hvWas) hvRender(); else hvPaint();
+}
+const HOW = { proof: 'Done with proof', pin: 'Ended by a parent', time: 'Ended after 4 hours', off: 'Ended with the blocker off' };
+const TP = { off: 'Blocker switched off', on: 'Blocker back on', clock: 'Phone clock changed', boot: 'Phone restarted' };
+// the log rows (newest first); parent: with Delete
+function hwLogHTML(n, parent) {
+  const L = hwLedger(), list = S.hw.log.slice().reverse(), show = n ? list.slice(0, n) : list;
+  if (!list.length) return '<p class="empty">Nothing yet. Every homework session lands here, with its photo.</p>';
+  return `<div class="rows hlog">${show.map(e => {
+    const bad = hwBad(e), tp = e.tp.filter(t => t[1] !== 'on' || bad).map(t => `${TP[t[1]]} at ${clockAt(t[0])}`).join(' · ');
+    return `<div class="irow hrow${bad || e.how === 'off' ? ' bad' : ''}">${e.ph ? `<button class="irow-ph" data-hw="ph" data-id="${e.id}" aria-label="Homework photo, ${esc(fmtDate(ymd(new Date(e.t0))))}"><span class="ph">${BOOK}<img data-fit="${esc(e.ph)}" data-sz="thumb" alt=""></span></button>` : `<span class="irow-ic">${BOOK}</span>`}
+      <span class="grow"><b>${fmtDate(ymd(new Date(e.t0)))}${e.n ? ` · ${esc(e.n)}` : ''}</b><small>${clockAt(e.t0)}–${clockAt(e.t1)} · ${e.m} min · ${HOW[e.how]}${e.pc ? ', parent checked' : ''}</small>${tp ? `<small class="tp">${esc(tp)}</small>` : ''}</span>
+      ${L.per[e.id] ? `<em>+${L.per[e.id]}</em>` : ''}${parent ? `<button class="act quiet" data-hw="del" data-id="${e.id}" aria-label="Delete this entry">Delete</button>` : ''}</div>`;
+  }).join('')}</div>${n && list.length > n ? `<button class="act" data-hw="all">Show all ${list.length}</button>` : ''}`;
+}
+function hvRender() {
+  const p = hv, el = $('hwvIn'); if (!p) return;
+  const st = hw.st || { cfg: { allow: [], min: 45, days: [] } }, s = st.s;
+  const top = (mid, hide) => `<div class="pu-top"><button class="pu-x" data-hw="${hide ? 'hide' : 'close'}" aria-label="${hide ? 'Hide, homework mode keeps going' : 'Close'}">${hide ? HIDE_ICON : X_ICON}</button><div class="mid">${mid}</div><span></span></div>`;
+  let h = '';
+  $('hwv').className = `pu hv ${p.step}`;
+  if (p.step === 'live' && s) {
+    const left = hwLeft(), apps = hwApps(), wait = !left && s.ph && s.rule === 'parent';
+    h = top(`<b>Homework mode</b><span>${s.why === 's' ? 'Scheduled · ' : 'Since '}${clockAt(s.start)}</span>`, true)
+      + `<div class="pu-body hv-body"><div class="wo-kick" id="hvKick">${left ? 'Homework time' : "Time's up"}</div>
+        <div class="ring hv-ring${left ? '' : ' done'}"><svg viewBox="0 0 100 100" aria-hidden="true"><circle class="trk" cx="50" cy="50" r="45" pathLength="100"/><circle class="halo" cx="50" cy="50" r="45" pathLength="100"/><circle class="fil" cx="50" cy="50" r="45" pathLength="100"/></svg>
+          <output>${left ? '<span id="hvLeft"></span><small>to go</small>' : `${CHECK}<small>Prove it</small>`}</output></div>
+        <h2 class="pd-hd">${left ? 'Homework first' : wait ? 'Waiting for a parent' : 'Finish & prove it'}</h2>
+        <p class="pu-sub pd-sub">${left ? `Your apps unlock when you finish: after ${st.s.min / 60e3} min, with a photo of your finished homework.` : wait ? 'Your photo is in. A parent checks it and types the PIN to finish.' : 'Take a photo of your finished homework to unlock your apps.'}</p>
+        ${s.off ? '<div class="heads hv-off"><b>The blocker is off</b>, so apps aren\'t locked and this one won\'t pay coins. Your parent sees it in the log. <div class="pair2"><button class="act" data-hw="endoff">End it</button><button class="act" data-hw="fix">Turn it on</button></div></div>' : ''}</div>
+      <div class="hv-sec"><span class="label">Allowed apps</span>${apps.length ? `<div class="hv-apps">${apps.map(a => `<button class="hv-app" data-hw="open" data-pkg="${esc(a.pkg)}">${hwIcon(a)}<span>${esc(a.name)}</span></button>`).join('')}</div>`
+        : '<p class="hv-none">None picked. Calls, texts and the camera still work.</p>'}</div>
+      <label class="field hv-note"><span class="label">What's it for? <small>optional</small></span><input id="hvNote" maxlength="80" placeholder="Maths p.42, essay plan..." autocomplete="off" value="${esc(S.hw.note)}"></label>
+      <div class="pu-act">${wait ? '<button class="go" data-hw="pfin">Parent: check &amp; finish</button>'
+        : `<button class="go" data-hw="fin" id="hvFin"${left ? ' disabled' : ''}>${CAM_ICON}<span id="hvFinT">${left ? `Finish in ${Math.ceil(left / 60e3)} min` : 'Finish &amp; prove it'}</span></button>`}
+        <button class="ghost" data-hw="end">End early · parent</button>
+        <p class="pu-fine">The photo is a record for your parent to look at. LEVEL UP doesn't mark your homework.</p></div>`;
+  } else if (p.step === 'res') {
+    const e = S.hw.log.find(x => x.id === p.id); if (!e) { hvClose(); return; }
+    const L = hwLedger(), c = L.per[e.id] || 0;
+    h = top('<b>Homework mode</b><span>Done</span>')
+      + `<div class="pu-body pd-res hv-res"><div class="wo-kick">${esc(e.n || fmtDate(ymd(new Date(e.t0))))}</div><h2 class="res-hd">Homework done</h2>
+        <p class="res-sub">Your apps are unlocked. The photo is in your homework log for your parent to see.</p>
+        <div class="loot" style="--n:3"><div class="c"><b>+${c}</b><span class="label">Coins</span></div><div class="q"><b>${e.m}</b><span class="label">Minutes</span></div><div class="s${L.run ? '' : ' dim'}"><b>${L.run}</b><span class="label">Day streak</span></div></div>
+        ${c < HW.BASE + e.m * HW.PER && c >= 0 ? `<p class="res-tip">Today's homework coin max is ${HW.DAY}.</p>` : ''}
+        ${e.ph ? `<div class="pd-proof">${`<span class="ph">${BOOK}<img data-fit="${esc(e.ph)}" data-sz="thumb" alt=""></span>`}<span><b>Proof saved</b><small>In your homework log</small></span></div>` : ''}</div>
+      <div class="pu-act"><button class="go" data-hw="close">Done</button></div>`;
+  } else {   // idle
+    const cfg = st.cfg, apps = hwApps(), L = hwLedger(), ready = hwReady(), pay = hwPay(cfg.min);
+    const sched = cfg.on && cfg.days.length ? `${hwDaysName(cfg.days)} at ${hwHM(cfg.at)}` : 'No schedule';
+    h = top(`<b>Homework mode</b><span>${esc(sched)}</span>`)
+      + `<div class="pu-body hv-idle"><div class="wo-kick">Homework mode</div><h2 class="pu-hd">Homework first</h2>
+        <p class="pu-sub">Every app locks except the ones your parent picked, till you finish with a photo of your homework. Calls, texts and Settings always work.</p>
+        <div class="loot" style="--n:3"><div class="q"><b>${cfg.min}</b><span class="label">Min at least</span></div><div class="a"><b>${apps.length}</b><span class="label">Apps allowed</span></div><div class="c"><b>+${pay}</b><span class="label">Coins</span></div></div>
+        ${L.run >= 1 ? `<p class="res-tip hv-streak">${FLAME} ${L.run} homework ${L.run === 1 ? 'day' : 'days'} in a row</p>` : ''}
+        ${apps.length ? `<div class="hv-strip" aria-label="Allowed: ${esc(apps.map(a => a.name).join(', '))}">${apps.slice(0, 8).map(hwIcon).join('')}${apps.length > 8 ? `<span class="more">+${apps.length - 8}</span>` : ''}</div>` : ''}
+        ${ready && !st.blocker ? '<div class="heads">The blocker is off, so homework mode can\'t lock anything. <button class="act" data-hw="fix">Turn it on</button></div>' : ''}
+        ${st.done ? '<p class="hv-done">Homework\'s done for today. Starting another one is fine.</p>' : ''}</div>
+      <div class="pu-act">${ready ? `<button class="go" data-hw="start">${BOOK}Start homework now</button>` : `<button class="go" data-hw="setup">Set it up · parent</button>`}
+        <button class="ghost" data-hw="parent">Parent settings</button></div>
+      <div class="sec hv-logh"><h2>Homework log <small>${S.hw.log.length || ''}</small></h2></div>${hwLogHTML(p.all ? 0 : 5, false)}`;
+  }
+  el.innerHTML = h;
+  hvWas = hvSig();
+  hydrate(el); hvPaint();
+  const n = $('hvNote');
+  if (n) n.oninput = () => { S.hw.note = n.value.replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 80); save(); };
+  el.focus({ preventScroll: true });
+}
+function hvPaint() {   // the countdown, in place
+  if (!hv || hv.step !== 'live' || !hwActive()) return;
+  const left = hwLeft(), o = $('hvLeft'), s = hw.st.s;
+  if (!left) { if (hvSig() !== hvWas) hvRender(); return; }
+  const t = fmtClock(left + 999);
+  if (o && o.textContent !== t) o.textContent = t;
+  const pct = left / s.min * 100;
+  $('hwvIn').querySelectorAll('.hv-ring .fil, .hv-ring .halo').forEach(c => { c.style.strokeDasharray = `${Math.min(100, pct).toFixed(2)} 100`; });
+  const f = $('hvFinT'), ft = `Finish in ${Math.ceil(left / 60e3)} min`; if (f && f.textContent !== ft) f.textContent = ft;
+}
+$('hwvIn').onclick = e => {
+  const b = e.target.closest('[data-hw]'); if (!b || b.disabled || !hv) return;
+  const a = b.dataset.hw;
+  if (a !== 'start') Sound.tap();
+  if (a === 'close') hvClose();
+  else if (a === 'hide') hvBack();
+  else if (a === 'start') hwStart();
+  else if (a === 'fin') hwFinish();
+  else if (a === 'pfin') hwSubmit(hw.st.s.ph);
+  else if (a === 'end') hwEndEarly();
+  else if (a === 'endoff') hwEndOff();
+  else if (a === 'fix') scrOpenSettings('accessibility');
+  else if (a === 'setup') hwSetup();
+  else if (a === 'parent') hwParent();
+  else if (a === 'all') { hv.all = true; hvRender(); }
+  else if (a === 'ph') ovOpen({ kind: 'fit', step: 'hview', hwe: b.dataset.id });
+  else if (a === 'open') { if (hwCall('homeworkOpenApp', b.dataset.pkg) !== true) { Sound.nope(); showNote("Couldn't open it", 'Open it from your home screen.', BOOK, 'Homework'); } }
+};
+
+const HW_WHY = {
+  nopin: ['Not set up yet', 'A parent sets a PIN first.'], setup: ['Not set up yet', 'A parent picks the allowed apps first.'],
+  blocker: ["Blocker's off", 'Turn on the blocker in Accessibility so homework mode can lock apps.'], active: ['Already on', 'Homework mode is already running.'],
+  early: ['Not yet', "The minimum time isn't up yet."], noproof: ['Photo first', 'Take a live photo of your finished homework.'],
+  inactive: ['Homework mode is off', 'It already ended.'], parent: ['A parent finishes this one', 'They check the photo and type the PIN.'],
+  pin: ['Needs the PIN', 'A parent has to type the PIN.'], on: ["Blocker's on", 'Homework mode is locking apps, so it ends with proof or a parent.'],
+};
+function hwFail(r) {
+  const w = HW_WHY[r && r.why] || ["Didn't work", 'Try again in a moment.'];
+  Sound.nope(); showNote(w[0], w[1], BOOK, 'Homework');
+  hwRefresh(); renderHw(); hwRepaint(); hwTicker();
+}
+function hwStart() {
+  const r = hwCall('homeworkStart');
+  if (!r || !r.ok) { hwFail(r); if (r && r.why === 'blocker') hwSetup(); return; }
+  Sound.go(); buzz([20, 40, 20]);
+  hwRefresh(); hv = { step: 'live' }; $('hwv').hidden = false; hvRender(); renderHw(); hwTicker();
+  showNote('Homework mode is on', `${hw.st.cfg.min} min, then finish with a photo. Allowed apps still work.`, BOOK, 'Homework');
+}
+function hwFinish() {
+  hwRefresh(); renderHw();
+  const s = hw.st && hw.st.s; if (!s) { hwRepaint(); return; }
+  if (hwLeft() > 0) { Sound.nope(); showNote('Not yet', `${Math.ceil(hwLeft() / 60e3)} min to go, then you can finish.`, BOOK, 'Homework'); return; }
+  camOpen(null, s.id);
+}
+// a near-black or near-blank frame (lens covered, pointed at a wall or the ceiling) isn't a photo of anything: 'dark' | 'blank' | ''
+function hwJunk(c) {
+  try {
+    const W = 128, H = Math.max(2, Math.round(W * c.height / c.width)), t = document.createElement('canvas'); t.width = W; t.height = H;
+    const g = t.getContext('2d', { willReadFrequently: true }); g.drawImage(c, 0, 0, W, H);
+    const d = g.getImageData(0, 0, W, H).data, y = new Float32Array(W * H); let sum = 0;
+    for (let i = 0; i < y.length; i++) { y[i] = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]; sum += y[i]; }
+    if (sum / y.length < 22) return 'dark';
+    // sharp edges: even one short answer on a page has a few dozen; a wall, the ceiling or a covered lens hardly any
+    let edge = 0;
+    for (let r = 0; r < H - 1; r++) for (let x = 0; x < W - 1; x++) { const i = r * W + x; if (Math.abs(y[i] - y[i + 1]) + Math.abs(y[i] - y[i + W]) > 20) edge++; }
+    return edge < W * H * 0.002 ? 'blank' : '';
+  } catch (e) { return ''; }   // can't tell: let it through (the parent sees the photo anyway)
+}
+async function hwUse() {
+  const o = ov; if (!o || !o.hw || o.saving || o.junk) return;
+  o.saving = true;
+  const id = uid() + uid();
+  try { await FitDB.put({ id, full: o.full, thumb: o.thumb, at: Date.now() }); }
+  catch (e) { o.saving = false; Sound.nope(); showNote("Couldn't save the photo", "This phone wouldn't store it. Try again.", BOOK, 'Homework'); return; }
+  const r = hwCall('homeworkProof', id);
+  if (!r || !r.ok) { o.saving = false; FitDB.del(id).catch(() => {}); if (ov === o) ovClose(); hwFail(r); return; }
+  const old = hw.st && hw.st.s && hw.st.s.ph;   // an earlier photo this session that never finished it
+  if (old && old !== id) { FitDB.del(old).catch(() => {}); fitForget(old); }
+  if (ov === o) ovClose();
+  await hwSubmit(id);
+}
+async function hwSubmit(id) {
+  hwRefresh();
+  const s = hw.st && hw.st.s; if (!s || !id) { renderHw(); hwRepaint(); return; }
+  let g = 1;
+  if (s.rule === 'parent' && !hw.st.parent) {
+    if (!await pinAsk({ title: 'Parent check', sub: 'Look at the homework photo, then type your PIN to finish homework mode.' })) { hv = { step: 'live' }; $('hwv').hidden = false; hwRefresh(); hvRender(); return; }
+    g = 2;
+  }
+  const r = hwCall('homeworkFinish', id, S.hw.note || '');
+  if (g === 2) hwCall('pinLock');
+  if (!r || !r.ok || !r.entry) { hwFail(r); return; }
+  hw.ended = s.id; S.hw.note = '';
+  hwRefresh(); save();
+  const e = S.hw.log.find(x => x.id === r.entry.id), c = e ? hwLedger().per[e.id] || 0 : 0;
+  closeSheet(); hv = { step: 'res', id: r.entry.id }; $('hwv').hidden = false; hvRender(); renderAll(); hwTicker();
+  celebrate({ hd: 'Homework done!', from: `${e ? e.m : 0} min${e && e.n ? ` · ${e.n}` : ''}`, img: BOOK_IMG, name: c ? `+${c} coins` : 'Apps unlocked', color: HW.COLOR, sound: 'clear' });
+}
+async function hwGate(sub) {   // a parent's PIN: true once typed (or still open from a moment ago)
+  hwRefresh();
+  if (!hw.st || !hw.st.pin) return false;
+  if (hw.st.parent) return true;
+  return pinAsk({ title: 'Parent PIN', sub });
+}
+async function hwEndEarly() {
+  if (!await hwGate('Ending homework mode early is for a parent.')) return;
+  const s = hw.st.s, r = hwCall('homeworkEnd'); hwCall('pinLock');
+  if (!r || !r.ok) { hwFail(r); return; }
+  if (s) hw.ended = s.id;
+  S.hw.note = ''; hwRefresh(); save(); hv = { step: 'idle' }; hvRender(); renderAll(); hwTicker();
+  Sound.uncheck(); showNote('Homework mode ended', 'A parent ended it. Apps are unlocked. No coins this time.', BOOK, 'Homework');
+}
+function hwEndOff() {
+  if (!confirm("End homework mode? With the blocker off it isn't locking anything. It goes in the log as ended with the blocker off, with no coins.")) return;
+  const s = hw.st && hw.st.s, r = hwCall('homeworkEndOff');
+  if (!r || !r.ok) { hwFail(r); return; }
+  if (s) hw.ended = s.id;
+  S.hw.note = ''; hwRefresh(); save(); hv = { step: 'idle' }; hvRender(); renderAll(); hwTicker();
+}
+async function hwDelete(id) {
+  const e = S.hw.log.find(x => x.id === id); if (!e) return;
+  if (!await hwGate('Deleting from the homework log is for a parent.')) return;
+  const inParent = !!$('sheet').querySelector('[data-hwp]') && $('sheetbg').classList.contains('open');
+  if (!confirm(`Delete the homework from ${fmtDate(ymd(new Date(e.t0)))}${e.ph ? ' and its photo' : ''}?${hwPays(e) ? ' Its coins go too.' : ''}`)) { if (!inParent) hwCall('pinLock'); return; }
+  const r = hwCall('homeworkDelete', id);
+  if (!inParent) hwCall('pinLock');
+  if (!r || !r.ok) { hwFail(r); return; }
+  if (e.ph) { FitDB.del(e.ph).catch(() => {}); fitForget(e.ph); }
+  S.hw.log = S.hw.log.filter(x => x.id !== id); hwRev++; save();
+  hwRefresh(); if (ov && ov.step === 'hview') ovClose(); if (hv) hvRender(); hwpRepaint(); renderAll(); Sound.uncheck();
+}
+
+/* the parent's PIN pad (#pin, above sheets). Native checks it and keeps count: 5 wrong tries lock it for 5 min, then longer */
+let pp = null, ppT = 0;   // {mode: 'check' | 'set' | 'change', stage: 'old' | 'new' | 'again', val, first, old, err, title, sub, res, help, until}
+function pinAsk(o = {}) {
+  return new Promise(res => {
+    if (pp) pp.res(false);
+    const mode = o.mode || 'check';
+    pp = { mode, stage: mode === 'set' ? 'new' : 'old', val: '', first: '', old: '', err: '', title: o.title || 'Parent PIN', sub: o.sub || '', res, help: false, until: 0 };
+    if (mode !== 'set' && hw.st && hw.st.wait > 0) { pp.until = Date.now() + hw.st.wait; pp.err = `Too many tries. Try again at ${clockAt(pp.until)}.`; }
+    $('pin').hidden = false; pinRender();
+  });
+}
+function pinDone(ok) {
+  const p = pp; if (!p) return;
+  pp = null; clearTimeout(ppT); $('pin').hidden = true; $('pinIn').innerHTML = ''; p.res(!!ok);
+}
+function pinRender() {
+  const p = pp, el = $('pinIn'); if (!p) return;
+  clearTimeout(ppT);
+  const locked = p.until > Date.now(), n = p.val.length;
+  if (locked) ppT = setTimeout(() => { if (pp === p) { p.until = 0; p.err = ''; pinRender(); } }, p.until - Date.now() + 200);
+  const step = p.stage === 'old' ? (p.mode === 'change' ? 'Type the PIN you have now' : 'Type the parent PIN') : p.stage === 'new' ? 'Choose a PIN: 4 to 6 digits' : 'Type the new PIN again';
+  const key = (k, label = k, cls = '') => `<button class="pk${cls}" data-k="${k}"${locked ? ' disabled' : ''}${label !== k ? ` aria-label="${label}"` : ''}>${label === k ? k : label === 'Delete' ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5h11a1 1 0 011 1v12a1 1 0 01-1 1H9l-6-7zm3.3 4l-1.4 1.4 1.6 1.6-1.6 1.6 1.4 1.4 1.6-1.6 1.6 1.6 1.4-1.4-1.6-1.6 1.6-1.6-1.4-1.4-1.6 1.6z" fill="currentColor"/></svg>' : label}</button>`;
+  el.innerHTML = `<div class="pin-hd"><span class="ic">${LOCK}</span><div><b id="pinHd">${esc(p.title)}</b>${p.sub ? `<small>${esc(p.sub)}</small>` : ''}</div></div>
+    <p class="pin-step">${step}</p>
+    <div class="pin-dots" role="img" aria-label="${n} of ${Math.max(4, n)} digits">${Array.from({ length: 6 }, (_, i) => `<i class="${i < n ? 'on' : ''}${i >= 4 ? ' opt' : ''}"></i>`).join('')}</div>
+    <p class="pin-err" role="alert">${esc(p.err)}</p>
+    <div class="pin-keys">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(d => key(String(d))).join('')}${key('x', 'Delete', ' fn')}${key('0')}<button class="pk ok" data-k="ok"${locked || n < 4 ? ' disabled' : ''}>OK</button></div>
+    <div class="pin-foot"><button class="act quiet" data-k="cancel">Cancel</button>${p.mode !== 'set' && p.stage === 'old' ? '<button class="act quiet" data-k="forgot" aria-expanded="' + p.help + '">Forgot the PIN?</button>' : ''}</div>
+    ${p.help ? `<p class="pin-help">The PIN isn't saved anywhere it can be read back, so it can't be shown or sent. The only way to reset it is to clear LEVEL UP's data: <b>Android Settings &gt; Apps &gt; LEVEL UP &gt; Storage &gt; Clear data</b>. That also wipes everything in LEVEL UP on this phone (quests, levels, coins, photos), so export a backup first.</p>` : ''}`;
+}
+function pinKey(k) {
+  const p = pp; if (!p) return;
+  if (k === 'cancel') { pinDone(false); return; }
+  if (k === 'forgot') { p.help = !p.help; pinRender(); return; }
+  if (p.until > Date.now()) return;
+  if (/^\d$/.test(k)) { if (p.val.length < 6) { p.val += k; p.err = ''; Sound.tap(); } pinRender(); return; }
+  if (k === 'x') { p.val = p.val.slice(0, -1); pinRender(); return; }
+  if (k !== 'ok' || p.val.length < 4) return;
+  const v = p.val; p.val = '';
+  if (p.stage === 'old') {
+    const r = hwCall('pinCheck', v) || { ok: false, why: 'failed' };
+    if (r.ok) { if (p.mode === 'check') { Sound.check(); pinDone(true); return; } p.old = v; p.stage = 'new'; p.err = ''; }
+    else if (r.why === 'locked') { p.until = Date.now() + (+r.wait || 5 * 60e3); p.err = `Too many tries. Try again at ${clockAt(p.until)}.`; Sound.nope(); buzz([30, 40, 30]); }
+    else if (r.why === 'wrong') { p.err = `Wrong PIN. ${r.left} ${r.left === 1 ? 'try' : 'tries'} left.`; Sound.nope(); buzz(30); }
+    else p.err = r.why === 'nopin' ? 'No PIN is set yet.' : "Couldn't check it. Try again.";
+  } else if (p.stage === 'new') { p.first = v; p.stage = 'again'; p.err = ''; }
+  else if (v !== p.first) { p.stage = 'new'; p.first = ''; p.err = "Those didn't match. Choose it again."; Sound.nope(); }
+  else {
+    const r = hwCall('pinSet', p.old, v) || { ok: false, why: 'failed' };
+    if (r.ok) { Sound.clear(); buzz([15, 40, 15]); showNote(p.mode === 'change' ? 'PIN changed' : 'PIN set', "Keep it to yourself. Forget it and LEVEL UP's data has to be cleared.", LOCK, 'Parent'); pinDone(true); return; }
+    p.stage = p.mode === 'change' ? 'old' : 'new'; p.err = r.why === 'locked' ? 'Too many tries. Try again later.' : "Couldn't save it. Try again.";
+  }
+  pinRender();
+}
+$('pinIn').onclick = e => { const b = e.target.closest('[data-k]'); if (b && !b.disabled) pinKey(b.dataset.k); };
+addEventListener('keydown', e => {
+  if ($('pin').hidden || !pp) return;
+  if (/^\d$/.test(e.key)) pinKey(e.key); else if (e.key === 'Backspace') pinKey('x'); else if (e.key === 'Enter') pinKey('ok'); else return;
+  e.preventDefault();
+});
+
+/* setup: 1 a parent's PIN, 2 the allowed apps (education apps on the phone pre-ticked), 3 the blocker (Accessibility) */
+function hwSummary() {
+  const allow = hw.st ? hw.st.cfg.allow : [], by = new Map((scr.apps || []).map(a => [a.pkg, a])), names = allow.filter(p => by.has(p)).map(p => by.get(p).name);
+  const n = scr.apps ? names.length : allow.length;
+  return `<b>${hw.st ? hw.st.cfg.min : 45} min</b> at least · ${!n ? 'no apps allowed (calls and texts still work)' : scr.apps ? esc(names.slice(0, 4).join(', ')) + (n > 4 ? ` + ${n - 4} more` : '') : `${n} ${n === 1 ? 'app' : 'apps'} allowed`}`;
+}
+function hwSetupHTML() {
+  const st = hw.st || { cfg: {} }, s1 = !!st.pin, s2 = s1 && !!st.cfg.set, s3 = !!st.blocker, all = s1 && s2 && s3, r13 = ((scr.st && scr.st.sdk) || 0) >= 33;
+  const stp = (n, ok, title, body) => `<div class="stp${ok ? ' ok' : ''}${n > 1 && !s1 ? ' locked' : ''}"><span class="n">${ok ? TICK : n}</span><div><b>${title}</b>${body}</div></div>`;
+  const got = '<span class="got">Done</span>', inst = /samsung/i.test((scr.st && scr.st.maker) || '');
+  const three = s3 ? got : `<p class="stp-d">In Accessibility, find LEVEL UP (it may be under <q>${inst ? 'Installed apps' : 'Downloaded apps'}</q>) and switch it on. Android warns about <q>full control</q>: LEVEL UP only checks which app is open, to send it home during homework. It can't read messages or type anything.</p>
+    <button class="do" data-hws="a11y">Open Accessibility</button>
+    ${r13 ? `<details class="rst"><summary>Says “Restricted setting”?</summary><ol><li>Tap <b>OK</b> on that message.</li><li>Tap <b>Open App info</b> below. Tap <b>⋮</b> in the top corner, then <b>Allow restricted settings</b>.</li><li>Come back and tap <b>Open Accessibility</b> again.</li></ol><button class="do ghost2" data-hws="appinfo">Open App info</button></details>` : ''}`;
+  return (all ? `<h2>You're set</h2><p class="dim">Homework mode is ready. Start it from Home, or switch on the schedule in Parent settings.</p>`
+    : `<h2>Homework mode</h2><p class="dim">For a parent to set up. During homework every app locks except the ones you allow, till the time's up and there's a photo of the finished work.</p>`)
+    + stp(1, s1, 'Set a parent PIN', s1 ? got : `<p class="stp-d">4 to 6 digits, just for you. It guards these settings, ending homework early, the log, and raising or switching off the screen time limit.</p><button class="do" data-hws="pin">Set a PIN</button>`)
+    + stp(2, s2, 'Pick the allowed apps', !s1 ? '<p class="stp-d">Unlocks after step 1.</p>' : `<div class="sum">${hwSummary()}</div><button class="act" data-hws="apps">${s2 ? 'Change' : 'Pick apps'}</button>`)
+    + stp(3, s3, 'Turn on the blocker', three)
+    + (all ? '<button class="go" data-hws="done">Done</button>' : '')
+    + '<p class="st-foot">Calls, texts, Settings and the camera always work. A session never runs longer than 4 hours. Switching the blocker off is possible (Android allows it) but shows up in the log.</p>';
+}
+function hwSetup() {
+  hwRefresh(); if (!scr.apps) scrLoadApps();
+  openSheet(`<div data-hws-box>${hwSetupHTML()}</div>`, hwBindSetup);
+  sheetOnClose = () => { hwCall('pinLock'); hwRefresh(); renderHw(); hwRepaint(); };
+}
+function hwBindSetup(el) {
+  el.querySelectorAll('[data-hws]').forEach(b => b.onclick = async () => {
+    const a = b.dataset.hws; Sound.tap();
+    if (a === 'pin') {
+      if (!await pinAsk({ mode: 'set', title: 'Parent PIN', sub: 'Only a parent should know it.' })) return;
+      hwRefresh();
+      if (!hw.st.cfg.set) {   // first time: the education apps on this phone are allowed to start with
+        const apps = scr.apps || scrLoadApps() || [];
+        hwCall('homeworkSetConfig', JSON.stringify({ ...hw.st.cfg, allow: apps.filter(x => x.edu).map(x => x.pkg) })); hwRefresh();
+      }
+      hwSetupRepaint();
+    } else if (a === 'apps') { if (await hwGate('Homework settings are for a parent.')) { sheetOnClose = null; hwParentSheet(true); } }   // the PIN stays open into the next sheet
+    else if (a === 'a11y') scrOpenSettings('accessibility');
+    else if (a === 'appinfo') scrOpenSettings('appinfo');
+    else if (a === 'done') closeSheet();
+  });
+}
+function hwSetupRepaint() {
+  const box = $('sheet').querySelector('[data-hws-box]'); if (!box || !$('sheetbg').classList.contains('open')) return;
+  const top = $('sheet').scrollTop; box.innerHTML = hwSetupHTML().replace('<h2>', '<h2 id="sheetTitle">'); hwBindSetup(box); $('sheet').scrollTop = top;
+}
+
+/* Parent settings (PIN first): minimum time, the schedule, how it finishes, the allowed apps, the log, the PIN */
+let hpList = null;   // the allow-list order, fixed when the sheet opens so rows never jump under a finger
+async function hwParent() { if (await hwGate('Homework settings are for a parent.')) hwParentSheet(); }
+function hwParentSheet(fromSetup) {
+  hwRefresh(); hpList = null;
+  openSheet(`<div data-hwp>${hwParentHTML()}</div>`, hwBindParent);
+  sheetOnClose = () => { hwCall('pinLock'); hwRefresh(); renderHw(); hwRepaint(); if (fromSetup) setTimeout(hwSetup, 0); };
+  setTimeout(() => {   // the app list is slow to build: show the sheet first
+    const apps = scr.apps || scrLoadApps() || [], allow = new Set(hw.st ? hw.st.cfg.allow : []);
+    const a = apps.filter(x => allow.has(x.pkg)), b = apps.filter(x => !allow.has(x.pkg) && x.edu), c = apps.filter(x => !allow.has(x.pkg) && !x.edu);
+    hpList = { order: [...a, ...b, ...c].map(x => x.pkg), top: a.length + b.length || 8, all: false, q: '' };
+    hwpRepaint();
+  }, 30);
+}
+function hwParentHTML() {
+  const st = hw.st; if (!st) return '<h2>Homework mode</h2><p class="dim">Couldn\'t read homework mode. Try again.</p>';
+  const c = st.cfg, s = st.s;
+  const mins = HW.MINS.map(m => `<button class="${c.min === m ? 'on' : ''}" data-hwp="min" data-v="${m}" aria-pressed="${c.min === m}"><b>${m}</b></button>`).join('');
+  const days = DAY.map((d, i) => `<button type="button" data-hwp="day" data-v="${i}" class="${c.days.includes(i) ? 'on' : ''}" aria-pressed="${c.days.includes(i)}" aria-label="${DAY_NAME[i]}">${d}</button>`).join('');
+  const hm = `${String(Math.floor(c.at / 60)).padStart(2, '0')}:${String(c.at % 60).padStart(2, '0')}`;
+  const search = hpList && scr.apps && scr.apps.length > 12 ? `<input class="search" type="search" placeholder="Search apps" aria-label="Search apps" value="${esc(hpList.q)}" autocomplete="off">` : '';
+  return `<h2>Homework mode</h2><p class="dim">Parent settings. They lock again when you close this.</p>
+    ${s ? `<div class="pend"><span>Homework mode is on${hwLeft() ? `: ${Math.ceil(hwLeft() / 60e3)} min to go` : ''}.</span><button class="act" data-hwp="end">End it now</button></div>` : ''}
+    <span class="label">Minimum time</span><div class="lim l5">${mins}</div>
+    <p class="rule-note">After this, he finishes with a live photo of the finished work. A session ends by itself after 4 hours at most.</p>
+    <span class="label">Schedule</span>
+    <div class="st-blk hw-sw"><div><b class="${c.on ? '' : 'off'}">${c.on ? 'On' : 'Off'}</b><small>${c.on && c.days.length ? `${hwDaysName(c.days)} at ${hwHM(c.at)}, even with LEVEL UP closed` : 'Starts by itself on school days'}</small></div><button class="act" role="switch" aria-checked="${c.on}" data-hwp="on">${c.on ? 'Turn off' : 'Turn on'}</button></div>
+    ${c.on ? `<div class="days hw-days">${days}</div><label class="field hw-at"><span class="label">Starts at</span><input type="time" id="hwAt" value="${hm}" step="300"></label>
+    <p class="rule-note">Once a day. Already done that day (with proof), or the phone off till 3 hours later: no start that day.</p>` : ''}
+    <span class="label">To finish</span><div class="lim l2"><button class="${c.rule === 'photo' ? 'on' : ''}" data-hwp="rule" data-v="photo" aria-pressed="${c.rule === 'photo'}"><b>Photo</b><small class="none">he finishes</small></button><button class="${c.rule === 'parent' ? 'on' : ''}" data-hwp="rule" data-v="parent" aria-pressed="${c.rule === 'parent'}"><b>Photo + PIN</b><small class="none">you check it</small></button></div>
+    <p class="rule-note">The photo is a record for you to look at. LEVEL UP doesn't check the homework itself.</p>
+    <span class="label">Allowed apps · ${c.allow.length}</span>${search}<div data-hlist>${hwListHTML()}</div>
+    <p class="rule-note">Calls, texts, Settings, the camera, clock, contacts and keyboards always work, so they aren't listed.</p>
+    <span class="label">Homework log</span>${hwLogHTML(0, true)}
+    <span class="label">PIN</span><div class="st-blk"><div><b>Set</b><small>Also guards raising or switching off the screen time limit</small></div><button class="act" data-hwp="pin">Change PIN</button></div>
+    <button class="go" data-hwp="done">Done</button>`;
+}
+function hwListHTML() {
+  if (!hpList || !scr.apps) return '<div class="alist"><p class="dim">Loading your apps...</p></div>';
+  const allow = hw.st ? hw.st.cfg.allow : [], by = new Map(scr.apps.map(a => [a.pkg, a])), q = hpList.q.trim().toLowerCase();
+  const ids = (q ? hpList.order.filter(p => by.get(p).name.toLowerCase().includes(q)) : hpList.all ? hpList.order : hpList.order.slice(0, hpList.top)).filter(p => by.has(p));
+  const row = a => `<button class="arow" role="checkbox" aria-checked="${allow.includes(a.pkg)}" data-hwp="app" data-pkg="${esc(a.pkg)}">${hwIcon(a)}<span class="grow"><span class="nm">${esc(a.name)}</span>${a.edu ? '<span class="mt">School app</span>' : ''}</span><span class="ck">${CHECK}</span></button>`;
+  const rest = hpList.order.length - hpList.top;
+  return `<div class="alist">${ids.length ? ids.map(p => row(by.get(p))).join('') : `<p class="dim">${q ? 'No app called that' : 'No apps to show'}</p>`}</div>${!q && !hpList.all && rest > 0 ? `<button class="act" data-hwp="more">Show all apps (${rest})</button>` : ''}`;
+}
+function hwSave(patch) {   // native has the last word; an expired PIN asks again
+  const r = hwCall('homeworkSetConfig', JSON.stringify({ ...hw.st.cfg, ...patch }));
+  if (r && r.ok) { hwRefresh(); hwpRepaint(); renderHw(); return; }
+  if (r && r.why === 'pin') { hwGate('Your 3 minutes ran out. Type the PIN again.').then(ok => { if (ok) hwSave(patch); else closeSheet(); }); return; }
+  hwFail(r);
+}
+function hwBindParent(el) {
+  el.querySelectorAll('[data-hwp]').forEach(b => b.onclick = async () => {
+    const a = b.dataset.hwp, c = hw.st.cfg; Sound.tap();
+    if (a === 'min') hwSave({ min: +b.dataset.v });
+    else if (a === 'on') hwSave({ on: !c.on, days: c.days.length ? c.days : [1, 2, 3, 4, 5] });
+    else if (a === 'day') { const d = +b.dataset.v, days = c.days.includes(d) ? c.days.filter(x => x !== d) : [...c.days, d].sort(); hwSave(days.length ? { days } : { days, on: false }); }
+    else if (a === 'rule') hwSave({ rule: b.dataset.v });
+    else if (a === 'app') { const p = b.dataset.pkg; hwSave({ allow: c.allow.includes(p) ? c.allow.filter(x => x !== p) : [...c.allow, p] }); }
+    else if (a === 'more') { hpList.all = true; hwpRepaint(); }
+    else if (a === 'end') { if (!confirm('End homework mode now? No coins for this one.')) return; const s = hw.st.s, r = hwCall('homeworkEnd'); if (!r || !r.ok) { hwFail(r); return; } if (s) hw.ended = s.id; S.hw.note = ''; hwRefresh(); save(); hwpRepaint(); renderAll(); hwRepaint(); hwTicker(); }
+    else if (a === 'pin') { if (await pinAsk({ mode: 'change', title: 'Change PIN', sub: '' })) { hwRefresh(); hwpRepaint(); } }
+    else if (a === 'done') closeSheet();
+  });
+  el.querySelectorAll('[data-hw]').forEach(b => b.onclick = () => {
+    Sound.tap();
+    if (b.dataset.hw === 'del') hwDelete(b.dataset.id);
+    else if (b.dataset.hw === 'ph') ovOpen({ kind: 'fit', step: 'hview', hwe: b.dataset.id });
+  });
+  const at = el.querySelector('#hwAt');
+  if (at) at.onchange = () => { const m = /^(\d\d):(\d\d)/.exec(at.value); if (m) hwSave({ at: +m[1] * 60 + +m[2] }); };
+  const s = el.querySelector('.search');
+  if (s) s.oninput = () => { hpList.q = s.value; const box = el.querySelector('[data-hlist]'); if (box) { box.innerHTML = hwListHTML(); hwBindParent(box); } };
+  hydrate(el);
+}
+function hwpRepaint() {   // in place: same scroll, focus back on the same control
+  const box = $('sheet').querySelector('[data-hwp]'); if (!box || !$('sheetbg').classList.contains('open')) return;
+  const a = document.activeElement, sel = a && box.contains(a) ? (a.dataset.pkg ? `[data-pkg="${CSS.escape(a.dataset.pkg)}"]` : a.dataset.hwp && a.dataset.v !== undefined ? `[data-hwp="${a.dataset.hwp}"][data-v="${a.dataset.v}"]` : a.dataset.hwp ? `[data-hwp="${a.dataset.hwp}"]` : a.classList.contains('search') ? '.search' : null) : null;
+  const top = $('sheet').scrollTop;
+  box.innerHTML = hwParentHTML().replace('<h2>', '<h2 id="sheetTitle">'); hwBindParent(box);
+  $('sheet').scrollTop = top;
+  const f = sel && box.querySelector(sel); if (f) { f.focus({ preventScroll: true }); if (f.classList.contains('search')) f.setSelectionRange(f.value.length, f.value.length); }
+}
+// native: OPEN LEVEL UP on the homework block screen
+window.levelupOpenHomework = () => {
+  if (!hwOn()) return;
+  $('rankup').classList.remove('open'); closeSheet(); pinDone(false); ovClose(); puClose();
+  if (pd) pdClose();
+  if (!$('v-home').classList.contains('on')) document.querySelector('.nav button[data-v=home]').click();
+  hvOpen();
+};
+
 function afterChange() { checkBoss(); checkAchievements(); renderCoins(); if ($('v-locker').classList.contains('on')) renderLocker(); }
 
 /* ------------------------------------------------------------------ nav + boot */
@@ -3389,27 +4064,30 @@ document.querySelectorAll('.nav button').forEach(b => b.onclick = () => {
 });
 // Android back button: returns true when it handled the press (so the app stays open)
 window.levelupBack = () => {
+  if (!$('pin').hidden) { pinDone(false); return true; }   // the PIN pad: cancel
   if (!$('pu').hidden) { puClose(); return true; }   // the push-up screen sits on top of everything, camera off
   if ($('rankup').classList.contains('open')) { nextMoment(); return true; }
   if ($('sheetbg').classList.contains('open')) { closeSheet(); return true; }
   if (!$('ov').hidden) { ovClose(); return true; }   // the Daily camera, photo or breathing screen; camera off, nothing half-saved
+  if (!$('hwv').hidden) { hvBack(); return true; }   // homework: a running session only hides (it keeps going) and Home shows
   if (!$('pd').hidden) { pdBack(); return true; }   // I'M BORED: a running Phone Down only hides, it keeps counting
   if (!$('wo').hidden) { $('wo').classList.contains('res') ? claimResults() : hideWorkout(); return true; }   // never discards
   if (!$('v-home').classList.contains('on')) { document.querySelector('.nav button[data-v=home]').click(); return true; }
   return false;   // app to background; a running workout persists
 };
-function renderAll() { renderCard(); renderBored(); renderScreen(); renderToday(); renderBoss(); renderHabits(); renderGoals(); renderTrain(); renderDaily(); if ($('v-stats').classList.contains('on')) renderStats(); afterChange(); }
+function renderAll() { renderCard(); renderBored(); renderHw(); renderScreen(); renderToday(); renderBoss(); renderHabits(); renderGoals(); renderTrain(); renderDaily(); if ($('v-stats').classList.contains('on')) renderStats(); afterChange(); }
 renderBody(); renderAll(); save(); woBoot(); irlTicker(); irlReturn();
-setTimeout(() => { scrRefresh(true); scrPush(); renderScreen(); afterChange(); }, 0);
+setTimeout(() => { scrRefresh(true); scrPush(); renderScreen(); if (hwOn()) { hwRefresh(); renderHw(); hwTicker(); } afterChange(); }, 0);
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
 // a new day while the app stays open (or comes back from the background): redraw so "today" moves
 let lastDay = today();
-const rollover = () => { if (today() !== lastDay) { lastDay = today(); scrRefresh(true); scrPush(); renderAll(); scrRepaint(); return true; } return false; };
+const rollover = () => { if (today() !== lastDay) { lastDay = today(); scrRefresh(true); scrPush(); hwRefresh(); renderAll(); scrRepaint(); return true; } return false; };
 setInterval(() => { if (!rollover() && $('v-stats').classList.contains('on')) renderQuit(); }, 30000);
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && !rollover() && scrOn() && scrRefresh()) { renderScreen(); scrRepaint(); afterChange(); }
   if (!document.hidden && S.workout) { woTick(); if (S.workout && !$('wo').hidden) renderWorkout(); }
   if (!document.hidden && S.irl.live) irlReturn();   // back from Phone Down: check it, or "Back already?"
+  if (!document.hidden && hwOn() && hwRefresh()) { renderHw(); hwRepaint(); hwTicker(); }   // back from an allowed app: the minutes moved
   if (!document.hidden && woAwake) wake(true);   // the browser drops a wake lock while hidden: take it again
 });
 if ('serviceWorker' in navigator && !window.LevelUpAndroid) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));

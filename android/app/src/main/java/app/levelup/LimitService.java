@@ -15,19 +15,22 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Enforces the daily screen-time limit. It only reads which app's window came to the front (the package name on
- * the event; canRetrieveWindowContent is off), and when a selected app is in front with no time left it shows
- * BlockActivity. Event-driven plus one timer: a timer Doze delays heals itself on the next window change.
- * The user can switch it off in Android Settings at any time; nothing here touches Settings.
+ * Enforces homework mode and the daily screen-time limit. It only reads which app's window came to the front (the
+ * package name on the event; canRetrieveWindowContent is off), and when an app that's locked right now is in front it
+ * shows BlockActivity. Event-driven plus two timers (the limit's, and homework's: checkpoints, the scheduled start,
+ * the 4-hour end); a timer Doze delays heals itself on the next window change.
+ * The user can switch it off in Android Settings at any time; nothing here touches Settings. Switching it off during
+ * homework is logged (Homework.blockerGone), never prevented.
  */
 public class LimitService extends AccessibilityService {
     private static final long MIN = 60_000L, WARN = 5 * MIN;
     private final Handler h = new Handler(Looper.getMainLooper());
-    private final Runnable check = this::check;
+    private final Runnable check = this::check, hwTick = this::hwTick;
     private final Map<String, Boolean> activities = new HashMap<>();
     private String fg;          // the app in front, as far as window changes tell
     private String blockedPkg;
     private long blockedAt, warnedUnlock;   // warnedUnlock: the unlock (its end time) that already got its 1-minute warning
+    private boolean hwOn;                   // a homework session was running at the last look
 
     @Override
     protected void onServiceConnected() {
@@ -36,6 +39,7 @@ public class LimitService extends AccessibilityService {
             Toast.makeText(this, "LEVEL UP blocker is on", Toast.LENGTH_SHORT).show();
         } catch (Exception ignored) {
         }
+        hwTick();   // homework's timer (and an "on again" note if it was switched off mid-session)
     }
 
     @Override
@@ -48,9 +52,15 @@ public class LimitService extends AccessibilityService {
         if (!pkg.equals(getPackageName()) && !isActivity(pkg, e.getClassName())) {
             // a limited app's own dialog or popup also means it is in front (coming back to it may show only that),
             // but it never takes the front from Settings, the phone or another protected app: a chat head or
-            // overlay popping up there is not the user opening the app
-            ScreenTime.Rule r = ScreenTime.rule(this);
-            if (r == null || !r.apps.contains(pkg)) return;
+            // overlay popping up there is not the user opening the app. In homework, nor over an allowed app (Docs).
+            Homework.Session hw = Homework.tick(this);
+            if (hw != null) {
+                if (hw.allows(pkg) || ScreenTime.isProtected(this, pkg)) return;
+                if (hw.allows(fg)) return;
+            } else {
+                ScreenTime.Rule r = ScreenTime.rule(this);
+                if (r == null || !r.apps.contains(pkg)) return;
+            }
             if (fg != null && !fg.equals(getPackageName()) && ScreenTime.isProtected(this, fg) && !ScreenTime.isHome(this, fg)) return;
         }
         fg = pkg;
@@ -58,11 +68,32 @@ public class LimitService extends AccessibilityService {
         check();
     }
 
-    /** Decides for the app in front now: block, warn, or come back when the next thing is due. */
+    /**
+     * Decides for the app in front now: block, warn, or come back when the next thing is due. In this order:
+     * 1. nothing known in front, or a protected app (phone, texts, Settings, home, keyboards, camera, clock, contacts,
+     *    LEVEL UP, the installer, anything not on the launcher): never blocked.
+     * 2. homework running (brought up to date first: time counted, the 4-hour end, a scheduled start that's due):
+     *    an allowed app is fine; a call or the lock screen waits a minute; anything else gets the homework block screen.
+     *    Push-up unlocks, the daily limit and its warning wait till homework is done.
+     * 3. no homework: the daily limit, as before (push-up unlock, then the minutes used).
+     */
     private void check() {
         h.removeCallbacks(check);
+        Homework.Session hw = Homework.tick(this);
+        hwOn = hw != null;
+        h.removeCallbacks(hwTick);
+        h.postDelayed(hwTick, Homework.nextTickMs(this, hw));
         String pkg = fg;
         if (pkg == null || ScreenTime.isProtected(this, pkg)) return;
+        if (hw != null) {
+            if (hw.allows(pkg)) return;   // homework's timer looks again when the session ends (the daily rule may apply then)
+            if (ScreenTime.inCall(this) || ScreenTime.locked(this)) {
+                h.postDelayed(check, MIN);
+                return;
+            }
+            block(pkg);
+            return;
+        }
         long now = System.currentTimeMillis(), midnight = ScreenTime.addDays(ScreenTime.dayStart(now), 1) - now;
         ScreenTime.Rule r = ScreenTime.rule(this);
         if (r == null || !r.apps.contains(pkg)) {
@@ -131,6 +162,17 @@ public class LimitService extends AccessibilityService {
         }, 1500);
     }
 
+    /** Homework's own timer: a session that starts (schedule) or ends (4 hours) changes what is locked, so look again then. */
+    private void hwTick() {
+        h.removeCallbacks(hwTick);
+        Homework.Session s = Homework.tick(this);
+        if ((s != null) != hwOn) {
+            check();   // looks at the app in front and sets the next tick
+            return;
+        }
+        h.postDelayed(hwTick, Homework.nextTickMs(this, s));
+    }
+
     private String currentIme() {
         try {
             ComponentName cn = ComponentName.unflattenFromString(Settings.Secure.getString(getContentResolver(), Settings.Secure.DEFAULT_INPUT_METHOD));
@@ -174,9 +216,17 @@ public class LimitService extends AccessibilityService {
     public void onInterrupt() {
     }
 
+    // switched off in Settings: during homework that is logged for the parent (an app update or a crash keeps it listed: not logged)
+    @Override
+    public boolean onUnbind(Intent intent) {
+        Homework.blockerGone(this);
+        return super.onUnbind(intent);
+    }
+
     @Override
     public void onDestroy() {
         h.removeCallbacksAndMessages(null);
+        Homework.blockerGone(this);
         super.onDestroy();
     }
 }

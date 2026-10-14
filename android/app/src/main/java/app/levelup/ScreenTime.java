@@ -178,8 +178,12 @@ final class ScreenTime {
         return c.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
-    /** Stores a sanitized copy; protected packages are dropped here as a second safety net. An empty plan limits nothing. */
-    static void setConfig(Context c, String json) {
+    /**
+     * Stores a sanitized copy; protected packages are dropped here as a second safety net. An empty plan limits nothing.
+     * With a parent's PIN set, a plan that is looser than the stored one on any day from today on (a higher limit, Off,
+     * an app taken out) is refused unless the PIN was just typed: false, and the stored plan stays.
+     */
+    static boolean setConfig(Context c, String json) {
         JSONArray out = new JSONArray();
         try {
             JSONArray plan = new JSONObject(json).optJSONArray("plan");
@@ -200,10 +204,33 @@ final class ScreenTime {
             out = new JSONArray();   // unreadable: limit nothing
         }
         try {
+            if (Homework.pinIsSet(c) && !Homework.parentOk(c)
+                    && looser(new JSONArray(prefs(c).getString(CFG, "[]")), out, protectedSet(c), dayKey(System.currentTimeMillis()))) return false;
+        } catch (Exception ignored) {
+        }
+        try {
             if (blockerOn(c)) out = keepToday(c, out);
         } catch (Exception ignored) {
         }
         prefs(c).edit().putString(CFG, out.toString()).apply();
+        return true;
+    }
+
+    /** next limits less than old on today or any later day either plan names: a higher limit, none, or an app gone. */
+    static boolean looser(JSONArray old, JSONArray next, Set<String> prot, String today) throws JSONException {
+        Set<String> days = new HashSet<>();
+        days.add(today);
+        for (JSONArray a : new JSONArray[] { old, next }) {
+            for (int i = 0; i < a.length(); i++) { String f = a.getJSONObject(i).getString("from"); if (f.compareTo(today) > 0) days.add(f); }
+        }
+        for (String k : days) {
+            JSONObject o = entryAt(old, k), n = entryAt(next, k);
+            int ol = o == null ? 0 : o.optInt("limit"), nl = n == null ? 0 : n.optInt("limit");
+            Set<String> oa = appsIn(o, prot), na = appsIn(n, prot);
+            if (ol <= 0 || oa.isEmpty()) continue;   // nothing limited that day: anything is as strict
+            if (nl <= 0 || na.isEmpty() || nl > ol || !na.containsAll(oa)) return true;
+        }
+        return false;
     }
 
     /**
@@ -316,8 +343,13 @@ final class ScreenTime {
         return used >= 0 && used >= r.limit * MIN;
     }
 
-    /** null when granted (15 min from now, one of today's unlocks used), else why not: "active", "none_left", "not_over". */
-    static synchronized String grantUnlock(Context c) {
+    /** null when granted (15 min from now, one of today's unlocks used), else why not: "homework", "active", "none_left", "not_over". */
+    static String grantUnlock(Context c) {
+        if (Homework.tick(c) != null) return "homework";   // homework first: no unlock till it's done (outside this lock: Homework's comes first)
+        return grant(c);
+    }
+
+    private static synchronized String grant(Context c) {
         if (unlockLeftMs(c) > 0) return "active";
         if (unlocksLeft(c) <= 0) return "none_left";
         if (!overLimit(c)) return "not_over";
@@ -676,7 +708,7 @@ final class ScreenTime {
                 if (prot.contains(p) || by.containsKey(p)) continue;
                 Long ms = u == null ? null : u.per.get(p);
                 JSONObject o = new JSONObject().put("pkg", p).put("name", String.valueOf(r.loadLabel(pm)).trim())
-                        .put("min", ms == null ? 0 : ms / MIN).put("suggest", suggest.contains(p));
+                        .put("min", ms == null ? 0 : ms / MIN).put("suggest", suggest.contains(p)).put("edu", Homework.EDU.contains(p));
                 String icon = icon(pm, r, p);
                 if (icon != null) o.put("icon", icon);
                 by.put(p, o);
@@ -687,6 +719,21 @@ final class ScreenTime {
         } catch (Exception e) {
             return "{\"ok\":false,\"error\":\"failed\"}";
         }
+    }
+
+    /** A launchable app's icon (the homework screen's allowed apps), or null. */
+    static String iconOf(Context c, String pkg) {
+        synchronized (ICONS) {
+            if (ICONS.containsKey(pkg)) return ICONS.get(pkg);
+        }
+        try {
+            PackageManager pm = c.getPackageManager();
+            for (ResolveInfo r : pm.queryIntentActivities(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setPackage(pkg), 0)) {
+                return icon(pm, r, pkg);
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
     }
 
     private static String icon(PackageManager pm, ResolveInfo r, String p) {

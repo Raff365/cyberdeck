@@ -49,7 +49,7 @@ public class MainActivity extends Activity {
     private static final int PICK_FILE = 1, CAMERA = 2;
     private static final int GROUND = Color.rgb(0x0c, 0x0a, 0x1d);
 
-    static final String OPEN = "levelup.open";   // "workout" | "pushups": sent by the screen-time block screen
+    static final String OPEN = "levelup.open";   // "workout" | "pushups" | "homework": sent by the block screen
     static final String APP = "levelup.app";     // with "pushups": the app that was blocked
 
     private static final long CHECK_EVERY_MS = 15L * 60 * 1000;   // auto-check on open, at most every 15 minutes
@@ -181,6 +181,7 @@ public class MainActivity extends Activity {
     private static String openJs(Intent i) {
         String what = i.getStringExtra(OPEN), app = i.getStringExtra(APP);
         if ("workout".equals(what)) return "window.levelupOpenWorkout && window.levelupOpenWorkout()";
+        if ("homework".equals(what)) return "window.levelupOpenHomework && window.levelupOpenHomework()";
         if ("pushups".equals(what)) return "window.levelupOpenPushups && window.levelupOpenPushups(" + (app == null ? "null" : JSONObject.quote(app)) + ")";
         return null;
     }
@@ -452,9 +453,10 @@ public class MainActivity extends Activity {
             return ScreenTime.appsJson(MainActivity.this);
         }
 
+        /** false: refused (looser than the stored plan while a parent's PIN is set and wasn't just typed). */
         @JavascriptInterface
-        public void setScreenTimeConfig(String json) {
-            ScreenTime.setConfig(MainActivity.this, json);
+        public boolean setScreenTimeConfig(String json) {
+            return ScreenTime.setConfig(MainActivity.this, json);
         }
 
         @JavascriptInterface
@@ -499,6 +501,94 @@ public class MainActivity extends Activity {
                 }
             });
             return true;
+        }
+
+        // ---- homework mode and the parent's PIN: JSON strings out; Homework checks every rule (JS only shows and asks)
+
+        @JavascriptInterface
+        public String homeworkStatus() {
+            return Homework.statusJson(MainActivity.this);
+        }
+
+        @JavascriptInterface
+        public String homeworkStart() {
+            return Homework.startJson(MainActivity.this);
+        }
+
+        /** The live proof photo was taken and stored (IndexedDB id): recorded for this session. */
+        @JavascriptInterface
+        public String homeworkProof(String id) {
+            return Homework.proofJson(MainActivity.this, id);
+        }
+
+        @JavascriptInterface
+        public String homeworkFinish(String proofId, String note) {
+            return Homework.finishJson(MainActivity.this, proofId, note);
+        }
+
+        /** A parent ends it (PIN typed in the last 3 minutes). */
+        @JavascriptInterface
+        public String homeworkEnd() {
+            return Homework.endJson(MainActivity.this);
+        }
+
+        /** Only while the blocker is off: ends it, logged as "blocker off". */
+        @JavascriptInterface
+        public String homeworkEndOff() {
+            return Homework.endOffJson(MainActivity.this);
+        }
+
+        @JavascriptInterface
+        public String homeworkSetConfig(String json) {
+            return Homework.setConfigJson(MainActivity.this, json);
+        }
+
+        @JavascriptInterface
+        public String homeworkDelete(String id) {
+            return Homework.deleteJson(MainActivity.this, id);
+        }
+
+        @JavascriptInterface
+        public String homeworkAllowed() {
+            return Homework.allowedJson(MainActivity.this);
+        }
+
+        /** Opens one of the allowed apps (the running session's list, else the settings'); false for anything else. */
+        @JavascriptInterface
+        public boolean homeworkOpenApp(String pkg) {
+            Intent i = pkg == null || !Homework.allowed(MainActivity.this).contains(pkg) || !ScreenTime.isLaunchable(MainActivity.this, pkg) ? null
+                    : getPackageManager().getLaunchIntentForPackage(pkg);
+            if (i == null) return false;
+            runOnUiThread(() -> {
+                try {
+                    startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                } catch (Exception ignored) {
+                }
+            });
+            return true;
+        }
+
+        @JavascriptInterface
+        public boolean pinIsSet() {
+            return Homework.pinIsSet(MainActivity.this);
+        }
+
+        /** {ok} or {ok:false, why: "bad" | "wrong" | "locked" | "failed", left, until}. Changing a PIN needs the old one. */
+        @JavascriptInterface
+        public String pinSet(String old, String pin) {
+            return Homework.pinSetJson(MainActivity.this, old, pin);
+        }
+
+        /** {ok} (a parent's 3 minutes start) or {ok:false, why: "wrong" | "locked" | "nopin", left: tries left, until}. */
+        @JavascriptInterface
+        public String pinCheck(String pin) {
+            return Homework.pinCheckJson(MainActivity.this, pin);
+        }
+
+        /** The parent area closed: PIN-guarded changes need the PIN again. */
+        @JavascriptInterface
+        public void pinLock() {
+            Homework.pinLock();
         }
 
         // ---- Daily Fit: voting links on cinolo.com (no CORS, so never from the page) and Android's share sheet
