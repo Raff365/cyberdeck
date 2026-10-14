@@ -3588,7 +3588,7 @@ function renderHw() {
   if (el.nextElementSibling !== at) $('v-home').insertBefore(el, at);
   if (!s) {
     const L = hwLedger(), streak = L.run >= 2 ? ` · ${L.run} day streak` : '';
-    const sm = !hwReady() ? 'Locks games till homework is done · a parent sets it up'
+    const sm = !hwReady() ? "Locks apps till homework's done"
       : !st.blocker ? "Blocker's off, so it can't lock anything. Tap to fix"
       : st.next && st.next <= Date.now() + 60e3 ? 'Starting now'
       : st.done ? `Done for today${st.next ? ` · next ${hwWhen(st.next)}` : ''}${streak}`
