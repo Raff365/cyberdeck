@@ -76,6 +76,7 @@ function seed() {
     fits: [], fitKept: {}, polls: [], well: { goal: 8, bz: true, days: {} }, fitCam: { facing: 'user', timer: 5 },
     irl: { live: null, log: [], ideas: [], seen: [], draw: null, f: { t: 0, p: '' } },
     hw: { log: [], days: [1, 2, 3, 4, 5], note: '' },
+    bonus: [],
   };
 }
 // One-time carry-over from the first prototype (localStorage key lockin.v1).
@@ -250,6 +251,19 @@ function hwNorm(x) {
     days: d.length ? [...new Set(d)].sort() : [1, 2, 3, 4, 5], note: typeof x.note === 'string' ? x.note.replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 80) : '' };
 }
 S.hw = hwNorm(S.hw && typeof S.hw === 'object' && !Array.isArray(S.hw) ? S.hw : {});
+// ...and saves from before PARENT MODE get theirs. bonus: coins a parent gave (n > 0) or took back (n < 0) in Parent mode,
+// oldest first [{id, at (ms), n: -500..500 and never 0, w: what for}]. A ledger like the others: coins() adds it up, so
+// removing an entry takes it back. Like every coin it lives in S, so a backup carries it (and the caps hold on import).
+const PM = { CAP: 500, KEEP: 300, NOTE: 60, IDLE: 150e3, TOUCH: 15e3 };
+function bonusNorm(a) {
+  const seen = new Set(), now = Date.now();
+  return (Array.isArray(a) ? a : []).filter(b => b && typeof b.id === 'string' && /^[a-z0-9]{4,24}$/i.test(b.id) && !seen.has(b.id) && seen.add(b.id)
+      && Number.isInteger(b.n) && b.n !== 0 && Math.abs(b.n) <= PM.CAP && typeof b.at === 'number' && b.at > 0 && b.at <= now + 60e3)
+    .map(b => ({ id: b.id, at: b.at, n: b.n, w: typeof b.w === 'string' ? b.w.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, PM.NOTE) : '' }))
+    .sort((x, y) => x.at - y.at).slice(-PM.KEEP);
+}
+S.bonus = bonusNorm(S.bonus);
+const bonusSum = () => S.bonus.reduce((a, b) => a + b.n, 0);
 const save =() => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -900,7 +914,7 @@ function checkAchievements() { for (const a of ACH) if (!S.ach[a.id] && a.test &
 
 // coins are earned from what you did (so un-ticking a quest takes its coins back) minus what you spent
 const coins = () => checkins() * 10 + clearDays() * 50 + Object.keys(S.bossWins).length * BOSS_COINS
-  + ACH.reduce((a, x) => a + (S.ach[x.id] ? x.coins : 0), 0) + woLedger().coins + scrLedger().coins + dlyLedger().coins + irlLedger().coins + hwLedger().coins + S.bank - S.spent;
+  + ACH.reduce((a, x) => a + (S.ach[x.id] ? x.coins : 0), 0) + woLedger().coins + scrLedger().coins + dlyLedger().coins + irlLedger().coins + hwLedger().coins + bonusSum() + S.bank - S.spent;
 let shownCoins = null;
 function renderCoins() {
   const c = coins(); $('coinsN').textContent = c.toLocaleString();
@@ -1693,7 +1707,7 @@ async function scrChange(fn) {
     S.screen.plan = JSON.parse(before); scrAfter(); Sound.nope();
     showNote('That needs a parent', "A parent's PIN is set, so a higher limit or taking apps off waits for them.", HOURGLASS, 'Screen time');
   }
-  if (g === 2) hwCall('pinLock');
+  if (g === 2) pinRelock();
 }
 // the commitment survives Erase all and Import: while the blocker is on, today's rule can only get stricter, and
 // anything looser starts tomorrow (native enforces the same). P: a plan that is about to replace S.screen.plan
@@ -3816,6 +3830,9 @@ async function hwSubmit(id) {
   closeSheet(); hv = { step: 'res', id: r.entry.id }; $('hwv').hidden = false; hvRender(); renderAll(); hwTicker();
   celebrate({ hd: 'Homework done!', from: `${e ? e.m : 0} min${e && e.n ? ` · ${e.n}` : ''}`, img: BOOK_IMG, name: c ? `+${c} coins` : 'Apps unlocked', color: HW.COLOR, sound: 'clear' });
 }
+// a parent area closed: the PIN locks again, unless Parent mode is open (it keeps the PIN till it locks itself)
+let pm = null;   // Parent mode while it's open (never saved): {at: last tap, nat: last native touch, all, rep}
+const pinRelock = () => { if (!pm) hwCall('pinLock'); };
 async function hwGate(sub) {   // a parent's PIN: true once typed (or still open from a moment ago)
   hwRefresh();
   if (!hw.st || !hw.st.pin) return false;
@@ -3841,9 +3858,9 @@ async function hwDelete(id) {
   const e = S.hw.log.find(x => x.id === id); if (!e) return;
   if (!await hwGate('Deleting from the homework log is for a parent.')) return;
   const inParent = !!$('sheet').querySelector('[data-hwp]') && $('sheetbg').classList.contains('open');
-  if (!confirm(`Delete the homework from ${fmtDate(ymd(new Date(e.t0)))}${e.ph ? ' and its photo' : ''}?${hwPays(e) ? ' Its coins go too.' : ''}`)) { if (!inParent) hwCall('pinLock'); return; }
+  if (!confirm(`Delete the homework from ${fmtDate(ymd(new Date(e.t0)))}${e.ph ? ' and its photo' : ''}?${hwPays(e) ? ' Its coins go too.' : ''}`)) { if (!inParent) pinRelock(); return; }
   const r = hwCall('homeworkDelete', id);
-  if (!inParent) hwCall('pinLock');
+  if (!inParent) pinRelock();
   if (!r || !r.ok) { hwFail(r); return; }
   if (e.ph) { FitDB.del(e.ph).catch(() => {}); fitForget(e.ph); }
   S.hw.log = S.hw.log.filter(x => x.id !== id); hwRev++; save();
@@ -3935,7 +3952,7 @@ function hwSetupHTML() {
 function hwSetup() {
   hwRefresh(); if (!scr.apps) scrLoadApps();
   openSheet(`<div data-hws-box>${hwSetupHTML()}</div>`, hwBindSetup);
-  sheetOnClose = () => { hwCall('pinLock'); hwRefresh(); renderHw(); hwRepaint(); };
+  sheetOnClose = () => { pinRelock(); hwRefresh(); renderHw(); hwRepaint(); };
 }
 function hwBindSetup(el) {
   el.querySelectorAll('[data-hws]').forEach(b => b.onclick = async () => {
@@ -3965,7 +3982,7 @@ async function hwParent() { if (await hwGate('Homework settings are for a parent
 function hwParentSheet(fromSetup) {
   hwRefresh(); hpList = null;
   openSheet(`<div data-hwp>${hwParentHTML()}</div>`, hwBindParent);
-  sheetOnClose = () => { hwCall('pinLock'); hwRefresh(); renderHw(); hwRepaint(); if (fromSetup) setTimeout(hwSetup, 0); };
+  sheetOnClose = () => { pinRelock(); hwRefresh(); renderHw(); hwRepaint(); if (fromSetup) setTimeout(hwSetup, 0); };
   setTimeout(() => {   // the app list is slow to build: show the sheet first
     const apps = scr.apps || scrLoadApps() || [], allow = new Set(hw.st ? hw.st.cfg.allow : []);
     const a = apps.filter(x => allow.has(x.pkg)), b = apps.filter(x => !allow.has(x.pkg) && x.edu), c = apps.filter(x => !allow.has(x.pkg) && !x.edu);

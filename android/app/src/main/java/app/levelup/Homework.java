@@ -661,6 +661,33 @@ final class Homework {
         }
     }
 
+    /** Parent mode's "Mark checked" on a log entry (on or off): needs the PIN. {ok} | {ok:false, why: "nopin" | "pin" | "gone"}. */
+    static synchronized String checkJson(Context c, String id, boolean on) {
+        try {
+            if (!pinIsSet(c)) return why("nopin");
+            if (!parentUse(c)) return why("pin");
+            if (id == null || !id.matches(ID)) return why("gone");
+            SharedPreferences p = prefs(c);
+            JSONArray log = log(p);
+            for (int i = 0; i < log.length(); i++) {
+                JSONObject e = log.optJSONObject(i);
+                if (e == null || !id.equals(e.optString("id"))) continue;
+                if (on) e.put("pc", 1);
+                else e.remove("pc");
+                p.edit().putString(LOG, log.toString()).commit();
+                return "{\"ok\":true}";
+            }
+            return why("gone");
+        } catch (Exception ex) {
+            return why("failed");
+        }
+    }
+
+    /** Parent mode is in use: keeps the parent's 3 minutes open. False once they've run out (or no PIN is set). */
+    static boolean touch(Context c) {
+        return parentUse(c);
+    }
+
     /** The allow list in use (the session's, else the settings'), for opening one of them from the app. */
     static Set<String> allowed(Context c) {
         Session s = tick(c);

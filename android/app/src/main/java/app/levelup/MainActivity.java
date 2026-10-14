@@ -232,6 +232,13 @@ public class MainActivity extends Activity {
         web.onPause();
     }
 
+    /** In the background: Parent mode locks (the page also sees visibilitychange; this is the belt to its braces). */
+    @Override
+    protected void onStop() {
+        if (pageReady) js("window.levelupPaused && window.levelupPaused()");
+        super.onStop();
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
@@ -589,6 +596,18 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void pinLock() {
             Homework.pinLock();
+        }
+
+        /** Parent mode is in use: keeps the parent's 3 minutes open. False once they ran out. */
+        @JavascriptInterface
+        public boolean pinTouch() {
+            return Homework.touch(MainActivity.this);
+        }
+
+        /** Parent mode: "Mark checked" on a homework log entry (PIN typed in the last 3 minutes). */
+        @JavascriptInterface
+        public String homeworkCheck(String id, boolean on) {
+            return Homework.checkJson(MainActivity.this, id, on);
         }
 
         // ---- Daily Fit: voting links on cinolo.com (no CORS, so never from the page) and Android's share sheet

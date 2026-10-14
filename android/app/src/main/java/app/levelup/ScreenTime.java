@@ -57,7 +57,7 @@ import java.util.Set;
  */
 final class ScreenTime {
     static final String PREFS = "screentime";
-    private static final String CFG = "cfg", WARNED = "warned", UNL_UNTIL = "unlockUntil", UNL_DAY = "unlockDay", UNL_USED = "unlockUsed";
+    private static final String CFG = "cfg", WARNED = "warned", UNL_UNTIL = "unlockUntil", UNL_DAY = "unlockDay", UNL_USED = "unlockUsed", UNL_LOG = "unlockLog";
     static final long UNLOCK_MS = 15 * 60_000L;   // an emergency unlock (10 push-ups on camera): 15 minutes, twice a day
     private static final int UNLOCKS = 2;
     private static final long MIN = 60_000L, LOOKBACK = 6 * 60 * MIN;   // a session open at midnight began before it
@@ -354,8 +354,23 @@ final class ScreenTime {
         if (unlocksLeft(c) <= 0) return "none_left";
         if (!overLimit(c)) return "not_over";
         long now = System.currentTimeMillis();
-        prefs(c).edit().putLong(UNL_UNTIL, now + UNLOCK_MS).putString(UNL_DAY, dayKey(now)).putInt(UNL_USED, UNLOCKS - unlocksLeft(c) + 1).commit();
+        prefs(c).edit().putLong(UNL_UNTIL, now + UNLOCK_MS).putString(UNL_DAY, dayKey(now)).putInt(UNL_USED, UNLOCKS - unlocksLeft(c) + 1)
+                .putString(UNL_LOG, unlockLog(c, now).put(now).toString()).commit();
         return null;
+    }
+
+    /** When each emergency unlock was granted, oldest first: the last 14 days, for Parent mode (the app's own data can't rewrite it). */
+    static JSONArray unlockLog(Context c, long now) {
+        JSONArray out = new JSONArray();
+        try {
+            JSONArray a = new JSONArray(prefs(c).getString(UNL_LOG, "[]"));
+            for (int i = 0; i < a.length(); i++) {
+                long t = a.optLong(i, 0);
+                if (t > 0 && t <= now + MIN && now - t <= 14 * 86_400_000L) out.put(t);
+            }
+        } catch (Exception ignored) {
+        }
+        return out;
     }
 
     /** The bridge's answer: {ok, until, left, why}. */
@@ -616,7 +631,8 @@ final class ScreenTime {
     static String status(Context c) {
         try {
             return new JSONObject().put("v", 1).put("sdk", Build.VERSION.SDK_INT).put("maker", Build.MANUFACTURER == null ? "" : Build.MANUFACTURER)
-                    .put("usage", hasUsageAccess(c)).put("blocker", blockerOn(c)).put("unlockUntil", unlockUntil(c)).put("unlocksLeft", unlocksLeft(c)).toString();
+                    .put("usage", hasUsageAccess(c)).put("blocker", blockerOn(c)).put("unlockUntil", unlockUntil(c)).put("unlocksLeft", unlocksLeft(c))
+                    .put("unlocks", unlockLog(c, System.currentTimeMillis())).toString();
         } catch (Exception e) {
             return "{\"v\":1,\"usage\":false,\"blocker\":false}";
         }
