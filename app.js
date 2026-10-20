@@ -4441,6 +4441,213 @@ for (const id of ['famHome', 'famStats']) if ($(id)) $(id).onclick = famInfo;
 
 function afterChange() { checkBoss(); checkAchievements(); renderCoins(); if ($('v-locker').classList.contains('on')) renderLocker(); famPush(); }
 
+/* ------------------------------------------------------------------ alarms (Android app only)
+   The alarms live in native (Alarms.java), so they ring with the app closed: this only shows and edits them through the
+   bridge. Ringing is a native screen over the lock screen: shake the phone to stop it, no snooze. Nothing here touches
+   screen time, homework or Parent mode. In a browser (or an app too old to have them) the sheet just says so. */
+const ALARM = '<svg viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="7.5"/><path d="M12 9.2v4.1l2.7 1.7M3.2 6.6l3.3-3.1M20.8 6.6l-3.3-3.1"/></g></svg>';
+const AL_TEXT = 80, WEEKDAYS = [1, 2, 3, 4, 5];
+const alOn = () => !!(window.LevelUpAndroid && ['alarmStatus', 'alarmList', 'alarmSave', 'alarmDelete'].every(f => typeof LevelUpAndroid[f] === 'function'));
+let al = { st: null, list: null }, alT = 0;   // live, never saved: the phone has the alarms
+function alRefresh() {
+  if (!alOn()) return false;
+  const st = hwCall('alarmStatus'), r = hwCall('alarmList');
+  al.st = st && typeof st === 'object' && !st.error ? st : null;
+  al.list = r && r.ok && Array.isArray(r.alarms) ? r.alarms.filter(a => a && typeof a.id === 'string' && a.h >= 0 && a.h < 24 && a.m >= 0 && a.m < 60)
+    .map(a => ({ id: a.id, h: a.h | 0, m: a.m | 0, days: (Array.isArray(a.days) ? a.days : []).filter(d => d >= 0 && d < 7).map(d => d | 0), text: String(a.text || ''), on: !!a.on, next: +a.next || 0 })) : null;
+  return true;
+}
+// the phone's own 12/24-hour setting (the page's locale alone doesn't know it); parts so AM/PM can be drawn small
+function alParts(h, m) {
+  const o = { hour: 'numeric', minute: '2-digit' };
+  if (al.st && typeof al.st.h24 === 'boolean') o.hour12 = !al.st.h24;
+  const p = new Intl.DateTimeFormat([], o).formatToParts(new Date(2000, 0, 1, h, m));
+  return { t: p.filter(x => x.type !== 'dayPeriod').map(x => x.value).join('').trim(), ap: (p.find(x => x.type === 'dayPeriod') || {}).value || '' };
+}
+const alClock = (h, m) => { const p = alParts(h, m); return p.ap ? `${p.t} ${p.ap}` : p.t; };
+// "8h 10m", "25m", "2d 3h": how long till it rings
+function alIn(t) {
+  const n = Math.max(1, Math.ceil((t - Date.now()) / 60e3)), d = Math.floor(n / 1440), h = Math.floor(n % 1440 / 60), m = n % 60;
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
+}
+function alDays(a) {
+  const d = a.days.slice().sort();
+  if (!d.length) {
+    if (!a.on || !a.next) return 'Once';
+    const k = ymd(new Date(a.next));
+    return k === today() ? 'Once · today' : k === ymd(addDays(new Date(), 1)) ? 'Once · tomorrow' : `Once · ${fmtDate(k)}`;
+  }
+  if (d.length === 7) return 'Every day';
+  if (d.join() === WEEKDAYS.join()) return 'Weekdays';
+  if (d.join() === '0,6') return 'Weekends';
+  return d.map(i => DAY_NAME[i]).join(' ');
+}
+// the next h:m on one of days (none: once), as the phone works it out: only for the sheet's live "Rings in"
+function alPreview(h, m, days) {
+  const now = new Date();
+  for (let i = 0; i <= 7; i++) {
+    const d = addDays(now, i); d.setHours(h, m, 0, 0);
+    if ((!days.length || days.includes(d.getDay())) && d > now) return d.getTime();
+  }
+  return 0;
+}
+const alNext = () => (al.list || []).filter(a => a.on && a.next > 0).sort((a, b) => a.next - b.next)[0] || null;
+
+/* Home: a quiet row under the Daily strip. The next alarm, or how to get one */
+function renderAlarm() {
+  const el = $('alHome');
+  clearTimeout(alT);
+  if (!alOn() || !al.list) { el.hidden = true; return; }
+  let nx = alNext();
+  if (nx && nx.next <= Date.now()) { alRefresh(); nx = alNext(); }   // it rang (or is ringing): the phone has the next one
+  el.hidden = false;
+  let b, sm, aria;
+  if (nx) {
+    const p = alParts(nx.h, nx.m);
+    b = `Alarm ${esc(p.t)}${p.ap ? `<em>${esc(p.ap)}</em>` : ''}`;
+    sm = `in ${alIn(nx.next)}${nx.text ? ` · <i>${esc(nx.text)}</i>` : ''}`;
+    aria = `Alarm ${alClock(nx.h, nx.m)}, in ${alIn(nx.next)}${nx.text ? `. ${nx.text}` : ''}. Open alarms`;
+    alT = setTimeout(renderAlarm, 60e3 - Date.now() % 60e3 + 50);   // the "in 8h 10m" moves every minute
+  } else if (al.list.length) {
+    b = 'Alarms off'; sm = `${al.list.length} saved · tap to switch one on`; aria = 'Alarms: all off. Open alarms';
+  } else {
+    b = 'Wake-up alarm'; sm = 'Shake your phone to switch it off'; aria = 'Set a wake-up alarm';
+  }
+  el.className = `alrow${nx ? '' : ' off'}`;
+  el.innerHTML = `<span class="ic">${ALARM}</span><span class="tx"><b>${b}</b><small>${sm}</small></span>${CHEV_R}`;
+  el.setAttribute('aria-label', aria);
+}
+$('alHome').onclick = () => alSheet();
+$('alOpen').onclick = () => alSheet();
+
+/* the sheet: the list (switch, tap to edit) and the editor, both drawn in place */
+function alWarnHTML() {
+  const st = al.st;
+  if (!st || !al.list || !al.list.length) return '';
+  const w = (t, k, b) => `<div class="al-warn"><span>${t}</span><button class="act" data-al-fix="${k}">${b}</button></div>`;
+  return (st.exact === false ? w("Android isn't letting alarms ring on time.", 'exact', 'Allow') : '')
+    + (st.notify === false ? w("Notifications are off, so the alarm screen can't pop up.", 'notify', 'Turn on') : '')
+    + (st.fullScreen === false ? w("Full-screen alarms are off, so it can't show over your lock screen.", 'fullscreen', 'Allow') : '');
+}
+function alListHTML() {
+  const L = (al.list || []).slice().sort((a, b) => a.h * 60 + a.m - (b.h * 60 + b.m)), max = 12;
+  const rows = L.map(a => {
+    const p = alParts(a.h, a.m), when = alDays(a), lab = `${alClock(a.h, a.m)}, ${when}${a.text ? `, ${a.text}` : ''}`;
+    return `<div class="alr${a.on ? '' : ' off'}">
+      <button class="alr-main" data-al-edit="${esc(a.id)}" aria-label="Edit alarm ${esc(lab)}">
+        <span class="alr-t"><b>${esc(p.t)}</b>${p.ap ? `<small>${esc(p.ap)}</small>` : ''}</span>
+        <span class="alr-d">${esc(when)}${a.on && a.next ? ` · <i>in ${alIn(a.next)}</i>` : ''}</span>
+        ${a.text ? `<span class="alr-x">${esc(a.text)}</span>` : ''}
+      </button>
+      <button class="alsw" role="switch" aria-checked="${a.on}" data-al-sw="${esc(a.id)}" aria-label="Alarm ${esc(alClock(a.h, a.m))}"><i></i></button>
+    </div>`;
+  }).join('');
+  return `<h2>Alarms</h2><p class="dim">Shake your phone to switch an alarm off. No snooze: that's the point.</p>${alWarnHTML()}
+    ${L.length ? `<div class="al-list">${rows}</div>` : '<div class="al-empty">No alarms yet. Set one for school mornings, or to remind you of something.</div>'}
+    ${L.length < max ? '<button class="add" data-al-new>+ New alarm</button>' : '<p class="dim">That\'s 12 alarms, the most there can be.</p>'}`;
+}
+function alPaint() {   // the list, redrawn in place when it's open
+  const box = $('sheet').querySelector('[data-al=list]');
+  if (!box || !$('sheetbg').classList.contains('open')) return;
+  box.innerHTML = alListHTML(); alBindList(box);
+}
+function alBindList(el) {
+  el.querySelectorAll('[data-al-edit]').forEach(b => b.onclick = () => { Sound.tap(); const a = (al.list || []).find(x => x.id === b.dataset.alEdit); if (a) alEdit(a); });
+  el.querySelectorAll('[data-al-sw]').forEach(b => b.onclick = () => {
+    const a = (al.list || []).find(x => x.id === b.dataset.alSw); if (!a) return;
+    const r = hwCall('alarmSave', JSON.stringify({ id: a.id, h: a.h, m: a.m, days: a.days, text: a.text, on: !a.on }));
+    if (!r || !r.ok) { Sound.nope(); showNote("Couldn't change that alarm", 'Try again in a moment.', ALARM, 'Alarm'); return; }
+    a.on ? Sound.uncheck() : Sound.check(); buzz(8);
+    alRefresh(); alPaint(); renderAlarm();
+    if (r.alarm && r.alarm.on && r.alarm.next) showNote('Alarm on', `Rings in ${alIn(r.alarm.next)}`, ALARM, 'Alarm');
+    alAsk();
+  });
+  const nw = el.querySelector('[data-al-new]'); if (nw) nw.onclick = () => { Sound.tap(); alEdit(null); };
+  el.querySelectorAll('[data-al-fix]').forEach(b => b.onclick = () => {
+    Sound.tap(); let ok = false; try { ok = LevelUpAndroid.alarmFix(b.dataset.alFix) === true; } catch (e) {}
+    if (!ok) showNote("Couldn't open Settings", 'Open Settings > Apps > LEVEL UP', ALARM, 'Alarm');
+  });
+}
+// Android 13+: notifications are asked for the first time an alarm is saved (the alarm screen pops up through one)
+function alAsk() {
+  const st = al.st;
+  if (st && st.notify === false && st.sdk >= 33 && !st.asked && typeof LevelUpAndroid.alarmFix === 'function') { try { LevelUpAndroid.alarmFix('notify'); } catch (e) {} }
+}
+function alSheet() {
+  Sound.tap();
+  if (!alOn()) {
+    openSheet(`<h2>Alarms</h2><p class="dim">Alarms work in the LEVEL UP Android app. They ring even when the app is closed, and you shake your phone to switch them off.</p><button class="go" data-ok>OK</button>`,
+      el => { el.querySelector('[data-ok]').onclick = closeSheet; });
+    return;
+  }
+  alRefresh(); renderAlarm();
+  if (!al.list) { showNote("Couldn't load your alarms", 'Try again in a moment.', ALARM, 'Alarm'); return; }
+  openSheet(`<div data-al="list">${alListHTML()}</div>`, alBindList);
+}
+function alEdit(a) {
+  const isNew = !a, x = a ? { ...a, days: a.days.slice() } : { id: '', h: 7, m: 0, days: WEEKDAYS.slice(), text: '', on: true };
+  const hm = `${String(x.h).padStart(2, '0')}:${String(x.m).padStart(2, '0')}`;
+  openSheet(`<div data-al="edit"><h2>${isNew ? 'New alarm' : 'Edit alarm'}</h2>
+    <label class="field al-time"><span class="label">Time</span><input id="alT" type="time" value="${hm}" required></label>
+    <div class="field"><span class="label">Repeat</span>
+      <div class="lim al-q" role="group" aria-label="Quick repeat">${[['once', 'Once'], ['wk', 'Weekdays'], ['all', 'Every day']].map(([k, t]) => `<button type="button" data-q="${k}"><b>${t}</b></button>`).join('')}</div>
+      <div class="days" id="alDays"></div></div>
+    <label class="field"><span class="label">Reminder <small>optional</small></span><input id="alX" maxlength="${AL_TEXT}" value="${esc(x.text)}" placeholder="Take your meds, bring PE kit..." autocomplete="off" enterkeyhint="done"><span class="al-cnt" id="alCnt"></span></label>
+    <p class="al-in" id="alIn" aria-live="polite"></p>
+    <button class="go" id="alSave">${isNew ? 'Set alarm' : 'Save'}</button>
+    <div class="row2"><button class="act quiet" data-al-back>Back</button>${isNew ? '<span></span>' : '<button class="act danger" data-al-del>Delete alarm</button>'}</div></div>`, el => {
+    const tIn = el.querySelector('#alT'), xIn = el.querySelector('#alX'), save = el.querySelector('#alSave');
+    const time = () => { const m = /^(\d\d):(\d\d)/.exec(tIn.value); return m ? { h: +m[1], m: +m[2] } : null; };
+    const paint = () => {
+      const d = x.days.slice().sort().join(), t = time();
+      el.querySelectorAll('[data-q]').forEach(b => { const on = { once: d === '', wk: d === WEEKDAYS.join(), all: d === ALL.join() }[b.dataset.q]; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
+      el.querySelector('#alDays').innerHTML = DAY.map((n, i) => `<button type="button" data-d="${i}" class="${x.days.includes(i) ? 'on' : ''}" aria-pressed="${x.days.includes(i)}" aria-label="${DAY_NAME[i]}">${n}</button>`).join('');
+      el.querySelectorAll('#alDays button').forEach(b => b.onclick = () => { const i = +b.dataset.d; x.days = x.days.includes(i) ? x.days.filter(v => v !== i) : [...x.days, i].sort(); Sound.tap(); paint(); });
+      const nx = t ? alPreview(t.h, t.m, x.days) : 0;
+      el.querySelector('#alIn').innerHTML = nx ? `Rings in <b>${alIn(nx)}</b>${x.days.length ? '' : ', once'}` : 'Pick a time';
+      save.disabled = !t;
+    };
+    const count = () => { el.querySelector('#alCnt').textContent = `${[...xIn.value].length}/${AL_TEXT}`; };
+    el.querySelectorAll('[data-q]').forEach(b => b.onclick = () => { x.days = { once: [], wk: WEEKDAYS.slice(), all: ALL.slice() }[b.dataset.q]; Sound.tap(); paint(); });
+    tIn.oninput = tIn.onchange = paint; xIn.oninput = count;
+    xIn.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); xIn.blur(); } };
+    paint(); count();
+    save.onclick = () => {
+      const t = time(); if (!t) return;
+      const r = hwCall('alarmSave', JSON.stringify({ id: x.id, h: t.h, m: t.m, days: x.days, text: xIn.value.trim().slice(0, 200), on: true }));
+      if (!r || !r.ok) { Sound.nope(); showNote("Couldn't save the alarm", r && r.why === 'full' ? "That's 12 alarms already. Delete one first." : 'Try again in a moment.', ALARM, 'Alarm'); return; }
+      Sound.check(); buzz(8);
+      alRefresh(); renderAlarm();
+      openSheet(`<div data-al="list">${alListHTML()}</div>`, alBindList);
+      showNote(isNew ? 'Alarm set' : 'Alarm saved', r.alarm && r.alarm.next ? `Rings in ${alIn(r.alarm.next)}` : `${alClock(t.h, t.m)}`, ALARM, 'Alarm');
+      alAsk();
+    };
+    el.querySelector('[data-al-back]').onclick = () => { Sound.tap(); alSheet(); };
+    const del = el.querySelector('[data-al-del]');
+    if (del) del.onclick = () => {
+      if (!confirm(`Delete the ${alClock(x.h, x.m)} alarm?`)) return;
+      const r = hwCall('alarmDelete', x.id);
+      if (!r || !r.ok) { Sound.nope(); showNote("Couldn't delete it", 'Try again in a moment.', ALARM, 'Alarm'); return; }
+      Sound.uncheck(); alRefresh(); renderAlarm(); openSheet(`<div data-al="list">${alListHTML()}</div>`, alBindList);
+    };
+  });
+}
+// how the last alarm ended, once: "You're up!" with how long it took (a personal best is the only prize: no coins)
+function alWoke() {
+  const w = al.st && al.st.woke;
+  if (!w || !(w.at > 0)) return;
+  try { LevelUpAndroid.alarmSeen(); } catch (e) {}
+  al.st.woke = null;
+  if (Date.now() - w.up > 12 * 3600e3) return;   // old news
+  const t = new Date(w.at), at = alClock(t.getHours(), t.getMinutes());
+  if (w.missed) { showNote('You slept through it', `Your ${at} alarm rang for 10 minutes. Try it a bit louder?`, ALARM, 'Alarm'); return; }
+  const s = Math.max(1, w.sec | 0), took = s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`;
+  const best = typeof S.alBest === 'number' && S.alBest > 0 ? S.alBest : 0, pb = best && s < best;
+  if (!best || s < best) { S.alBest = s; save(); }
+  showNote("You're up!", `${w.taps ? 'Tapped' : 'Shook'} off your ${at} alarm in ${took}${pb ? '. Fastest yet!' : ''}`, ALARM, 'Alarm');
+}
+window.levelupAlarmChanged = () => { if (!alRefresh()) return; renderAlarm(); alPaint(); alWoke(); };
+
 /* ------------------------------------------------------------------ nav + boot */
 document.querySelectorAll('.nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('.nav button').forEach(x => { x.classList.toggle('on', x === b); if (x === b) x.setAttribute('aria-current', 'page'); else x.removeAttribute('aria-current'); });
@@ -4463,10 +4670,10 @@ window.levelupBack = () => {
   if (!$('v-home').classList.contains('on')) { document.querySelector('.nav button[data-v=home]').click(); return true; }
   return false;   // app to background; a running workout persists
 };
-function renderAll() { renderFam(); renderCard(); renderHw(); renderScreen(); renderToday(); renderBoss(); renderHabits(); renderGoals(); renderTrain(); renderDaily(); if ($('v-stats').classList.contains('on')) renderStats(); afterChange(); }
+function renderAll() { renderFam(); renderCard(); renderHw(); renderScreen(); renderAlarm(); renderToday(); renderBoss(); renderHabits(); renderGoals(); renderTrain(); renderDaily(); if ($('v-stats').classList.contains('on')) renderStats(); afterChange(); }
 renderBody(); renderAll(); save(); woBoot();
 // Family link first: a limit a parent changed from their phone is in the plan before it's pushed to native again
-setTimeout(() => { famRefresh(); famApply(); renderFam(); scrRefresh(true); scrPush(); renderScreen(); if (hwOn()) { hwRefresh(); renderHw(); hwTicker(); } afterChange(); famPush(true); }, 0);
+setTimeout(() => { famRefresh(); famApply(); renderFam(); scrRefresh(true); scrPush(); renderScreen(); if (hwOn()) { hwRefresh(); renderHw(); hwTicker(); } levelupAlarmChanged(); afterChange(); famPush(true); }, 0);
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
 // a new day while the app stays open (or comes back from the background): redraw so "today" moves
 let lastDay = today();
@@ -4476,6 +4683,7 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden && !rollover() && scrOn() && scrRefresh()) { renderScreen(); scrRepaint(); afterChange(); }
   if (!document.hidden && S.workout) { woTick(); if (S.workout && !$('wo').hidden) renderWorkout(); }
   if (!document.hidden && hwOn() && hwRefresh()) { renderHw(); hwRepaint(); hwTicker(); }   // back from an allowed app: the minutes moved
+  if (!document.hidden) levelupAlarmChanged();   // the "in 8h 10m" (and a note from the alarm screen)
   if (!document.hidden && woAwake) wake(true);   // the browser drops a wake lock while hidden: take it again
 });
 if ('serviceWorker' in navigator && !window.LevelUpAndroid) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
