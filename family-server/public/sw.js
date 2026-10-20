@@ -1,6 +1,6 @@
 // LEVEL UP Family service worker: the app shell works offline (the page shows the last update it saved), the API is
 // never cached (always fresh, and nothing private lands in a cache), and Web Push notifications are shown here.
-const CACHE = 'luf-v1';
+const CACHE = 'luf-v2';
 const SHELL = ['/', '/app.js', '/style.css', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/apple-touch-icon.png',
   '/fonts/archivo-var.woff2', '/fonts/barlowc-600.woff2', '/fonts/barlowc-700.woff2', '/fonts/barlowc-800.woff2'];
 

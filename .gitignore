@@ -4,6 +4,7 @@ android/build/
 android/app/build/
 android/local.properties
 android/app/src/main/assets/www/
+android/app/src/main/assets/www.tmp/
 # the family server's tools and generated copies
 family-server/node_modules/
 family-server/.wrangler/

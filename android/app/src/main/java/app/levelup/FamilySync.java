@@ -42,8 +42,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * When: on app open, right after one of those events, and every ~15 minutes from LimitService while it runs. One sync
  * at a time on one background thread; never on the UI thread; never throws.
  *
- * Requests: homework start/end, today's limit and "mark checked" are applied here (native owns them), bonus coins and
- * Bored ideas wait for app.js (it owns those) and are acked when it has done them. Every request has an id; its result is
+ * Requests: homework start/end, today's limit and "mark checked" are applied here (native owns them), bonus coins
+ * wait for app.js (it owns those) and are acked when it has done them. Every request has an id; its result is
  * kept, so a request delivered twice is acked twice but done once.
  *
  * The device token lives in noBackupFilesDir (never in a backup), with the server URL and the photo switch.
@@ -380,7 +380,7 @@ final class FamilySync {
         }
     }
 
-    /** Requests waiting for app.js (bonus coins, ideas) and limit changes it should mirror: [{id, kind, args, mirror}]. */
+    /** Requests waiting for app.js (bonus coins) and limit changes it should mirror: [{id, kind, args, mirror}]. */
     static synchronized String takeJson(Context c) {
         return prefs(c).getString(JS, "[]");
     }
@@ -647,8 +647,7 @@ final class FamilySync {
                     case "hw_start": res = Homework.startJson(c); break;
                     case "hw_check": res = Homework.remoteCheckJson(c, args.optString("id"), args.optBoolean("on")); break;
                     case "limit": res = ScreenTime.familyLimitJson(c, args.optInt("limit"), args.optString("mode")); break;
-                    case "coins":
-                    case "idea": res = null; break;
+                    case "coins": res = null; break;
                     default: res = fail("bad");
                 }
             } finally {

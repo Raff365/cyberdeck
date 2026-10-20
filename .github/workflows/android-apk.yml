@@ -15,6 +15,7 @@ on:
       - 'bosses/**'
       - 'vendor/**'
       - 'android/**'
+      - 'tools/minify-web.mjs'
       - '.github/workflows/android-apk.yml'
   workflow_dispatch:
 
@@ -41,6 +42,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
+
+      # sync-web.sh minifies the copied web app with pinned esbuild, fetched by npx
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
       - name: Copy the web app into the Android project
         run: ./android/sync-web.sh

@@ -12,8 +12,7 @@ const MAX = { parents: 4, events: 3000, photos: 100, photoBytes: 400 * 1024, cmd
 const RL = { k: [120, 600e3], kp: [40, 3600e3], kc: [10, 600e3], p: [300, 600e3], pc: [30, 3600e3], pp: [300, 600e3], pt: [6, 600e3] };
 export const EVENT_KINDS = ['hw_start', 'hw_done', 'hw_early', 'hw_off', 'hw_time', 'blocker_off', 'blocker_on', 'clock', 'over_limit', 'unlock'];
 const NOTIFY = new Set(['hw_done', 'hw_early', 'hw_off', 'blocker_off', 'over_limit', 'unlock']);
-const LIMITS = [30, 45, 60, 90, 120], IDEA_MINS = [10, 20, 30, 45, 60];
-const IDEA_CATS = ['out', 'move', 'make', 'build', 'brain', 'people', 'help', 'skill', 'chill'];
+const LIMITS = [30, 45, 60, 90, 120];
 const HOWS = ['proof', 'pin', 'time', 'off'];
 
 // what a parent can ask the phone to do; args are checked here and again on the phone
@@ -22,7 +21,6 @@ export const COMMANDS = {
   hw_start: () => ({}),
   coins: a => (isInt(a.n, -500, 500) && a.n !== 0 ? { n: a.n, w: str(a.w, 60) } : null),
   limit: a => (LIMITS.includes(a.limit) && (a.mode === 'tighten' || a.mode === 'loosen') ? { limit: a.limit, mode: a.mode } : null),
-  idea: a => { const n = str(a.n, 40); return n && IDEA_MINS.includes(a.min) && IDEA_CATS.includes(a.cat) ? { n, min: a.min, cat: a.cat } : null; },
   hw_check: a => (typeof a.id === 'string' && ID_RE.test(a.id) && typeof a.on === 'boolean' ? { id: a.id, on: a.on } : null),
 };
 
@@ -42,17 +40,16 @@ export function cleanSnap(s, now) {
     hw: { k: oneOf(h.k, ['run', 'done', 'ended', 'off', 'not'], 'not'), v: str(h.v, 24), sub: str(h.sub, 80), next: ms(h.next, now + 8 * DAY),
       run: h.run ? { start: ms(run.start, now), left: int(run.left, 0, 4 * 3600e3), off: bool(run.off) } : null,
       cfg: { set: bool(c.set), on: bool(c.on), min: int(c.min, 0, 240), days: arr(c.days, 7).filter(d => isInt(d, 0, 6)), at: int(c.at, 0, 1439), rule: oneOf(c.rule, ['photo', 'parent'], 'photo') } },
-    pf: int(s.pf, 0, 1440), pfv: int(s.pfv, 0, 1440), ck: int(s.ck, 0, 20), ckN: int(s.ckN, 0, 20), ckd: arr(s.ckd, 10).map(x => str(x, 24)).filter(Boolean),
+    ck: int(s.ck, 0, 20), ckN: int(s.ckN, 0, 20), ckd: arr(s.ckd, 10).map(x => str(x, 24)).filter(Boolean),
     qd: int(s.qd, 0, 200), qn: int(s.qn, 0, 200), ulT: int(s.ulT, 0, 20),
-    week: { k0: isDay(w.k0) ? w.k0 : '', days: arr(w.days, 7).map(d => { d = obj(d); return { k: isDay(d.k) ? d.k : '', u: d.u == null ? null : int(d.u, 0, 1440), l: int(d.l, 0, 1440), ok: bool(d.ok), fin: bool(d.fin), pf: int(d.pf, 0, 1440), ck: int(d.ck, 0, 20) }; }),
+    week: { k0: isDay(w.k0) ? w.k0 : '', days: arr(w.days, 7).map(d => { d = obj(d); return { k: isDay(d.k) ? d.k : '', u: d.u == null ? null : int(d.u, 0, 1440), l: int(d.l, 0, 1440), ok: bool(d.ok), fin: bool(d.fin), ck: int(d.ck, 0, 20) }; }),
       under: int(w.under, 0, 7), limDays: int(w.limDays, 0, 7), hwN: int(w.hwN, 0, 200), hwM: int(w.hwM, 0, 20000), hwP: int(w.hwP, 0, 200), ulW: int(w.ulW, 0, 100),
-      wo: int(w.wo, 0, 200), woM: int(w.woM, 0, 20000), pfW: int(w.pfW, 0, 10080), ckDays: int(w.ckDays, 0, 7), ckNeed: int(w.ckNeed, 0, 20) },
+      wo: int(w.wo, 0, 200), woM: int(w.woM, 0, 20000), ckDays: int(w.ckDays, 0, 7), ckNeed: int(w.ckNeed, 0, 20) },
     att: arr(s.att, 40).map(a => { a = obj(a); return { t: ms(a.t, now), now: bool(a.now), day: isDay(a.day) ? a.day : '', k: oneOf(a.k, ['warn', 'info', 'unl'], 'info'), hd: str(a.hd, 80), sub: str(a.sub, 120) }; }).filter(a => a.hd),
     log: arr(s.log, 40).map(e => { e = obj(e); return typeof e.id === 'string' && ID_RE.test(e.id) ? { id: e.id, t0: ms(e.t0, now), t1: ms(e.t1, now), m: int(e.m, 0, 240), how: oneOf(e.how, HOWS, 'pin'), why: oneOf(e.why, ['m', 's'], 'm'),
       n: str(e.n, 80), ph: bool(e.ph), pc: bool(e.pc), bad: bool(e.bad), tp: arr(e.tp, 10).filter(x => Array.isArray(x)).map(x => [ms(x[0], now), oneOf(x[1], ['off', 'on', 'clock', 'boot'], 'on')]) } : null; }).filter(Boolean),
     coins: int(s.coins, 0, 1e8), bonus: arr(s.bonus, 10).map(b => { b = obj(b); return { at: ms(b.at, now), n: int(b.n, -500, 500), w: str(b.w, 60) }; }).filter(b => b.n),
     plan: { lim: int(pl.lim, 0, 1440), apps: int(pl.apps, 0, 500), next: pl.next && isDay(obj(pl.next).from) ? { from: pl.next.from, lim: int(pl.next.lim, 0, 1440) } : null },
-    ideas: int(s.ideas, 0, 100),
   };
 }
 

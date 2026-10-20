@@ -19,7 +19,6 @@
   --done: #3ddc84;
   --warn: #ff9fb0;
   --amber: #ffb020;
-  --lime: #b6f24a;
   --display: "Barlow Condensed", "Arial Narrow", "Helvetica Neue Condensed", sans-serif;
   --text: "Archivo", "Helvetica Neue", Arial, sans-serif;
   --r: 14px;
@@ -115,13 +114,13 @@ p { margin: 8px 0; }
 .app b { font: 700 18px/1 var(--display); color: var(--dim); font-variant-numeric: tabular-nums; }
 
 .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.tile:first-child:nth-last-child(odd) { grid-column: 1 / -1; }   /* an odd one out goes first, full width */
 .tile { background: var(--panel); border: 1px solid var(--rule); border-radius: var(--r); padding: 13px 14px 14px; min-width: 0; }
 .tile b { display: block; font: 800 32px/1.05 var(--display); margin: 6px 0 2px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .tile b i { font: 700 16px/1 var(--display); font-style: normal; color: var(--dim); }
 .tile small { display: block; color: var(--dim); font-size: 12.5px; line-height: 1.35; overflow-wrap: anywhere; }
 .tile.hw b { color: var(--accent); }
 .tile.hw.done b { color: var(--done); }
-.tile.pf b { color: var(--lime); }
 
 .status { display: flex; gap: 12px; align-items: center; padding: 13px 14px; border-radius: var(--r); background: var(--panel-hi); border: 1px solid var(--rule-hi); margin-bottom: 12px; }
 .status i { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--accent); }
@@ -139,7 +138,6 @@ p { margin: 8px 0; }
 .bars i::before { content: ""; display: block; width: 100%; height: var(--h); border-radius: 8px; background: #cfc9ee; }
 .bars i.hit::before { background: var(--done); }
 .bars i.over::before { background: var(--warn); }
-.bars.pf i::before { background: var(--lime); }
 .bars s { position: absolute; left: -3px; right: -3px; bottom: var(--l); border-top: 2px dashed var(--chalk); opacity: .8; }
 .bars b { position: absolute; left: 0; right: 0; top: -18px; text-align: center; font: 700 13px/1 var(--display); color: var(--chalk); }
 .bars small { margin-top: 6px; font: 600 10.5px/1 var(--text); letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
@@ -192,7 +190,7 @@ p { margin: 8px 0; }
 
 .field { display: block; margin: 14px 0 0; }
 .field .label { margin: 0 2px 6px; }
-.field input, .field select {
+.field input {
   width: 100%; min-height: 50px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--rule-hi); background: var(--panel-hi);
   font-size: 17px; /* 16px+ keeps iOS from zooming in */
 }

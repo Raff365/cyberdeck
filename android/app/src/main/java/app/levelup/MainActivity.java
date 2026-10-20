@@ -14,7 +14,6 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
-import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.webkit.JavascriptInterface;
@@ -501,24 +500,6 @@ public class MainActivity extends Activity {
             return openSettings(which);
         }
 
-        /** Phone Down: other apps' foreground time between two moments, JSON (see ScreenTime.phoneUseJson). */
-        @JavascriptInterface
-        public String phoneUseBetween(double fromMs, double toMs) {
-            return ScreenTime.phoneUseJson(MainActivity.this, (long) fromMs, (long) toMs);
-        }
-
-        /** The wall clock and time since boot: a clock moved forward can't stretch a Phone Down session. */
-        @JavascriptInterface
-        public String clock() {
-            return "{\"now\":" + System.currentTimeMillis() + ",\"up\":" + SystemClock.elapsedRealtime() + "}";
-        }
-
-        /** "Nice. Close the app?": to the background, like Home (the app stays alive). */
-        @JavascriptInterface
-        public void minimize() {
-            runOnUiThread(() -> moveTaskToBack(true));
-        }
-
         /** After 10 push-ups on camera: 15 min unlocked, if today's rules allow it. JSON {ok, until, left, why}. */
         @JavascriptInterface
         public String grantPushupUnlock() {
@@ -767,7 +748,7 @@ public class MainActivity extends Activity {
             return FamilySync.haveJson(MainActivity.this);
         }
 
-        /** Requests from a parent's phone that app.js applies (bonus coins, ideas) or mirrors (today's limit). */
+        /** Requests from a parent's phone that app.js applies (bonus coins) or mirrors (today's limit). */
         @JavascriptInterface
         public String familyTake() {
             return FamilySync.takeJson(MainActivity.this);

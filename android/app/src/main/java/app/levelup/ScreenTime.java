@@ -738,38 +738,6 @@ final class ScreenTime {
         }
     }
 
-    /**
-     * Phone Down check: foreground ms inside [from, to) on every app you can open from the launcher, except LEVEL UP
-     * itself, launchers and system UI, plus the top 3 by time. {ok, ms, top:[{label, ms}]}; {ok:false, error} without
-     * Usage access or for a window that can't be a session (empty, over 4 hours, or starting in the future).
-     */
-    static String phoneUseJson(Context c, long from, long to) {
-        try {
-            long now = System.currentTimeMillis();
-            if (from <= 0 || to <= from || to - from > 4 * 3600_000L || from > now) return "{\"ok\":false,\"error\":\"bad_window\"}";
-            Usage u = usage(c, from, Math.min(to, now));
-            if (u == null) return "{\"ok\":false,\"error\":\"no_access\"}";
-            String me = c.getPackageName();
-            long ms = 0;
-            List<Map.Entry<String, Long>> used = new ArrayList<>();
-            for (Map.Entry<String, Long> e : u.per.entrySet()) {
-                String p = e.getKey();
-                if (p.equals(me) || !launchable.contains(p) || homes.contains(p) || "com.android.systemui".equals(p)) continue;
-                ms += e.getValue();
-                used.add(e);
-            }
-            Collections.sort(used, (a, b) -> Long.compare(b.getValue(), a.getValue()));
-            JSONArray top = new JSONArray();
-            for (int i = 0; i < used.size() && i < 3; i++) {
-                String p = used.get(i).getKey(), l = label(c, p);
-                top.put(new JSONObject().put("label", l == null || l.isEmpty() ? p : l).put("ms", used.get(i).getValue()));
-            }
-            return new JSONObject().put("ok", true).put("ms", ms).put("top", top).toString();
-        } catch (Exception e) {
-            return "{\"ok\":false,\"error\":\"failed\"}";
-        }
-    }
-
     private static final Map<String, String> ICONS = new HashMap<>();
 
     /** Launchable, unprotected apps by name, with today's minutes, the pre-tick hint and a small PNG icon. */

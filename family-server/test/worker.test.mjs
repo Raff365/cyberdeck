@@ -50,11 +50,11 @@ const putPhoto = (token, entry, bytes, ct = 'image/jpeg') => req(`/api/kid/photo
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const SNAP = () => ({ v: 1, at: Date.now(), day: today(), name: 'Raff', scr: { on: true, meas: true, lim: 60, used: 42, total: 125, top: [{ n: 'YouTube', m: 25 }, { n: 'Roblox', m: 12 }] },
   hw: { k: 'done', v: 'Done', sub: '47 min · finished 4:49 PM', next: 0, cfg: { set: true, on: true, min: 45, days: [1, 2, 3, 4, 5], at: 960, rule: 'photo' } },
-  pf: 30, pfv: 30, ck: 3, ckN: 6, ckd: ['Fit', 'Water', 'Mood'], qd: 2, qn: 3, ulT: 1,
-  week: { k0: today(), days: [{ k: today(), u: 42, l: 60, ok: false, fin: false, pf: 30, ck: 3 }], under: 3, limDays: 5, hwN: 4, hwM: 142, hwP: 3, ulW: 2, wo: 1, woM: 32, pfW: 58, ckDays: 2, ckNeed: 4 },
+  ck: 3, ckN: 6, ckd: ['Fit', 'Water', 'Mood'], qd: 2, qn: 3, ulT: 1,
+  week: { k0: today(), days: [{ k: today(), u: 42, l: 60, ok: false, fin: false, ck: 3 }], under: 3, limDays: 5, hwN: 4, hwM: 142, hwP: 3, ulW: 2, wo: 1, woM: 32, ckDays: 2, ckNeed: 4 },
   att: [{ t: Date.now() - 3600e3, k: 'unl', hd: 'Push-up unlock used', sub: '10 push-ups on camera for 15 min of limited apps' }],
   log: [{ id: 'hwe4dddddddd', t0: Date.now() - 3 * 3600e3, t1: Date.now() - 2 * 3600e3, m: 47, how: 'proof', why: 'm', n: 'Science worksheet', ph: true, pc: false, bad: false, tp: [] }],
-  coins: 1240, bonus: [{ at: Date.now() - DAY, n: 50, w: 'Helped with the groceries' }], plan: { lim: 60, apps: 5, next: null }, ideas: 1 });
+  coins: 1240, bonus: [{ at: Date.now() - DAY, n: 50, w: 'Helped with the groceries' }], plan: { lim: 60, apps: 5, next: null } });
 
 before(async () => {
   pushSrv = http.createServer((rq, rs) => {
@@ -190,6 +190,7 @@ test('sync: content type, size, and the snapshot rebuilt field by field', async 
   const s = SNAP();
   s.secretMessages = ['hi']; s.location = { lat: 1 }; s.scr.top.push({ n: '<img src=x onerror=alert(1)>' + 'A'.repeat(100), m: 99999 }); s.name = 'Raff\u0000 Murphy the Great and Powerful';
   s.att.push({ t: Date.now(), k: 'evil', hd: 'x', sub: 'y', html: '<b>' });
+  Object.assign(s, { pf: 30, pfv: 30, ideas: 1 }); s.week.pfW = 58; s.week.days[0].pf = 30;   // an older phone's I'm Bored numbers
   const r = await sync(f.kidToken, { snap: s, nat: { at: Date.now(), blocker: true, usage: true, lim: 60, used: 44, total: 130, hw: null, ulLeft: 1, ulUntil: 0, ver: '1.0.41', contacts: ['x'] } });
   assert.equal(r.status, 200);
   const st = (await req('/api/parent/state', { token: f.parent })).body;
@@ -200,7 +201,8 @@ test('sync: content type, size, and the snapshot rebuilt field by field', async 
   assert.equal(st.snap.att[1].k, 'info'); assert.equal(st.snap.att[1].html, undefined);
   assert.equal(st.nat.contacts, undefined); assert.equal(st.nat.used, 44);
   assert.equal(st.child, 'Raff Murphy the');
-  assert.deepEqual(Object.keys(st.snap).sort(), ['at', 'att', 'bonus', 'ckN', 'ck', 'ckd', 'coins', 'day', 'hw', 'ideas', 'log', 'name', 'pf', 'pfv', 'plan', 'qd', 'qn', 'scr', 'ulT', 'v', 'week'].sort());
+  assert.deepEqual(Object.keys(st.snap).sort(), ['at', 'att', 'bonus', 'ckN', 'ck', 'ckd', 'coins', 'day', 'hw', 'log', 'name', 'plan', 'qd', 'qn', 'scr', 'ulT', 'v', 'week'].sort());
+  assert.equal(st.snap.week.pfW, undefined); assert.equal(st.snap.week.days[0].pf, undefined);
 });
 
 test('events: unknown kinds dropped, ids deduplicated, timestamps clamped', async () => {
@@ -227,7 +229,7 @@ test('rate limits per token: kid 120 / 10 min, parent commands 30 / hour', async
   await clock(f.kidToken, 0);
   const g = await linked(), cs = [];
   for (let i = 0; i < 31; i++) {
-    const r = await req('/api/parent/cmd', { method: 'POST', token: g.parent, body: { kind: 'idea', args: { n: `Idea ${i}`, min: 10, cat: 'out' } } });
+    const r = await req('/api/parent/cmd', { method: 'POST', token: g.parent, body: { kind: 'coins', args: { n: 1, w: `Bonus ${i}` } } });
     cs.push(r.status);
     if (r.status === 200 && i % 5 === 4) await sync(g.kidToken, { acks: (await sync(g.kidToken, {})).body.cmds.map(c => ({ id: c.id, ok: true })) });
   }
@@ -251,7 +253,7 @@ test('storage caps: newest 3000 events kept', async () => {
 test('commands: validation, delivery, ack (idempotent), cancel, expiry, pending cap', async () => {
   const f = await linked();
   const bad = [{ kind: 'wipe_phone' }, { kind: 'coins', args: { n: 501 } }, { kind: 'coins', args: { n: 0 } }, { kind: 'coins', args: { n: 2.5 } }, { kind: 'limit', args: { limit: 75, mode: 'tighten' } },
-    { kind: 'limit', args: { limit: 60, mode: 'off' } }, { kind: 'idea', args: { n: '', min: 10, cat: 'out' } }, { kind: 'idea', args: { n: 'x', min: 11, cat: 'out' } }, { kind: 'idea', args: { n: 'x', min: 10, cat: 'nope' } },
+    { kind: 'limit', args: { limit: 60, mode: 'off' } }, { kind: 'idea', args: { n: 'Bake cookies', min: 10, cat: 'out' } },
     { kind: 'hw_check', args: { id: '../x', on: true } }, { kind: 'hw_check', args: { id: 'hwe4dddddddd', on: 'yes' } }];
   for (const b of bad) assert.equal((await req('/api/parent/cmd', { method: 'POST', token: f.parent, body: b })).status, 400, JSON.stringify(b));
   const mk = async (kind, args) => (await req('/api/parent/cmd', { method: 'POST', token: f.parent, body: { kind, args } })).body.cmd;

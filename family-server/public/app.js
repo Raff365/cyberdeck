@@ -15,8 +15,6 @@ const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform 
 const STANDALONE = navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
 const TABS = ['today', 'week', 'alerts', 'homework', 'actions'];
 const LIMITS = [30, 45, 60, 90, 120];
-const IDEA_MINS = [10, 20, 30, 45, 60];
-const CATS = [['out', 'Outside'], ['move', 'Move'], ['make', 'Create'], ['build', 'Build'], ['brain', 'Brain'], ['people', 'People'], ['help', 'Help out'], ['skill', 'Skills'], ['chill', 'Chill']];
 const BOOK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3.5h11.5A2.5 2.5 0 0119 6v14.5H7.5A2.5 2.5 0 015 18zm2.2 2v12.2c0 .3.2.6.5.6h9.1V5.5zM9 8h6v2H9z" fill="currentColor"/></svg>';
 const SHARE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l4.2 4.2-1.4 1.4L13 6.3V15h-2V6.3L9.2 8.1 7.8 6.7zM5 10h3v2H7v8h10v-8h-1v-2h3v12H5z" fill="currentColor"/></svg>';
 const PLUS_SQ = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2zm0 2v14h14V5zm6 3h2v3h3v2h-3v3h-2v-3H8v-2h3z" fill="currentColor"/></svg>';
@@ -188,7 +186,7 @@ function viewToday() {
     }
   }
   if (s && L.snapToday) {
-    h += `<div class="tiles" style="margin-top:12px">${tile('Homework', esc(L.hw.v), esc(L.hw.sub), `hw ${L.hw.k}`)}${tile('Phone-free', `${s.pf} <i>min</i>`, !s.pf ? 'None yet today' : s.pfv >= s.pf ? 'Checked by the phone' : `${s.pfv} min checked by the phone`, 'pf')}
+    h += `<div class="tiles" style="margin-top:12px">${tile('Homework', esc(L.hw.v), esc(L.hw.sub), `hw ${L.hw.k}`)}
       ${tile('Daily check-ins', `${s.ck} <i>of ${s.ckN}</i>`, s.ck ? esc(s.ckd.join(', ')) : 'None yet today')}${tile('Quests', `${s.qd} <i>of ${s.qn}</i>`, !s.qn ? 'None due today' : s.qd >= s.qn ? 'All done' : `${s.qn - s.qd} to go`)}</div>`;
   } else if (L.running) h += `<div class="tiles" style="margin-top:12px">${tile('Homework', esc(L.hw.v), esc(L.hw.sub), 'hw run')}</div>`;
   if (s) h += `<div class="card" style="margin-top:12px"><span class="label">Coins</span><div class="big"><b>${s.coins.toLocaleString()}</b><span>coins</span></div>${s.bonus.length ? `<p class="line">Last bonus: <b>${s.bonus[0].n > 0 ? '+' : '−'}${Math.abs(s.bonus[0].n)}</b>${s.bonus[0].w ? ` · ${esc(s.bonus[0].w)}` : ''} · ${esc(when(s.bonus[0].at))}</p>` : ''}</div>`;
@@ -206,14 +204,12 @@ function viewWeek() {
   const W = s.week, D = W.days;
   const short = k => new Date(k + 'T12:00:00').toLocaleDateString([], { weekday: 'short' });
   const col = (x, inner) => `<span class="${x.k === s.day ? 'today' : ''}">${inner}<small>${x.k === s.day ? 'Today' : esc(short(x.k))}</small></span>`;
-  const smax = Math.max(60, ...D.map(x => Math.max(x.u || 0, x.l || 0))), pmax = Math.max(60, ...D.map(x => x.pf));
+  const smax = Math.max(60, ...D.map(x => Math.max(x.u || 0, x.l || 0)));
   const sb = D.map(x => col(x, `<i class="${x.l && x.u > x.l ? 'over' : x.ok ? 'hit' : ''}" style="--h:${x.u == null ? 0 : Math.min(100, x.u / smax * 100).toFixed(0)}%">${x.l ? `<s style="--l:${(x.l / smax * 100).toFixed(0)}%"></s>` : ''}<b>${x.u == null ? '' : x.u}</b></i>`)).join('');
-  const pb = D.map(x => col(x, `<i style="--h:${Math.min(100, x.pf / pmax * 100).toFixed(0)}%"><b>${x.pf || ''}</b></i>`)).join('');
   const lab = D.map(x => `${dayName(x.k, true)}: ${x.u == null ? 'no data' : `${x.u} min${x.l ? ` of ${x.l}` : ''}`}`).join(', ');
   const k0 = new Date(W.k0 + 'T12:00:00').toLocaleDateString([], { day: 'numeric', month: 'short' }), k1 = new Date(s.day + 'T12:00:00').toLocaleDateString([], { day: 'numeric', month: 'short' });
   return `<div class="sec"><h1>Last 7 days</h1><span>${esc(k0)} – ${esc(k1)}</span></div>
     ${s.scr.on ? `<div class="card"><span class="label">Screen time · limited apps, minutes</span><div class="bars-wrap"><div class="bars" role="img" aria-label="${esc(lab)}">${sb}</div></div><p class="fine">Dashed line: that day's limit. Green: under it.</p></div>` : ''}
-    <div class="card"><span class="label">Phone-free minutes</span><div class="bars-wrap"><div class="bars pf" role="img" aria-label="${esc(D.map(x => `${dayName(x.k, true)}: ${x.pf} min`).join(', '))}">${pb}</div></div><p class="line"><b>${W.pfW} min</b> in all, away from the phone</p></div>
     <div class="tiles" style="margin-top:12px">
       ${tile('Under the limit', W.limDays ? `${W.under} <i>of ${W.limDays} days</i>` : '–', W.limDays ? 'Finished days with a limit' : 'No limit on those days')}
       ${tile('Homework', `${W.hwN} <i>${W.hwN === 1 ? 'session' : 'sessions'}</i>`, W.hwN ? `${fmtMins(W.hwM)} · ${W.hwP} with a photo` : 'None this week', 'hw')}
@@ -304,7 +300,7 @@ function photoSheet(id) {
 }
 
 /* ------------------------------------------------------------------ Actions */
-let A = { mode: 'give', amt: 25, note: '', idea: '', imin: 20, icat: 'build' };
+let A = { mode: 'give', amt: 25, note: '' };
 const CMD_TEXT = c => {
   const a = c.args || {};
   switch (c.kind) {
@@ -312,14 +308,14 @@ const CMD_TEXT = c => {
     case 'hw_start': return 'Start homework now';
     case 'coins': return `${a.n > 0 ? `Give ${a.n}` : `Take back ${-a.n}`} ${Math.abs(a.n) === 1 ? 'coin' : 'coins'}${a.w ? ` · ${a.w}` : ''}`;
     case 'limit': return a.mode === 'tighten' ? `Limit today to ${limName(a.limit)}` : `Allow ${limName(a.limit)} today`;
-    case 'idea': return `Add the idea "${a.n}"`;
+    case 'idea': return `Add the idea "${a.n}"`;   // I'm Bored is gone from the app; old requests stay in the history
     case 'hw_check': { const e = ST.snap && ST.snap.log.find(x => x.id === a.id); return `Mark homework${e ? ` from ${dayName(ymd(new Date(e.t0)), true)}` : ''} ${a.on ? 'checked' : 'not checked'}`; }
     default: return c.kind;
   }
 };
 const WHY = { inactive: 'No homework was running', blocker: 'The blocker is off on the phone', setup: "Homework mode isn't set up", nopin: 'No parent PIN on the phone', active: 'Homework was already on',
   nolimit: 'No screen time limit is set', notlower: "That isn't lower than today's limit", nothigher: "That isn't more than today's limit", nocoins: 'Not enough coins to take back', cap: 'Over 500 at a time',
-  full: 'The ideas list is full', gone: "That entry isn't on the phone", dup: 'Already done', bad: "The phone didn't understand it", failed: "The phone couldn't do it" };
+  gone: "That entry isn't on the phone", dup: 'Already done', bad: "The phone didn't understand it", failed: "The phone couldn't do it" };
 function cmdStatus(c) {
   if (c.status === 'done') return ['done', `Done ${c.done ? ago(c.done) : ''}`];
   if (c.status === 'failed') return ['fail', `Couldn't: ${WHY[c.result] || WHY.failed}`];
@@ -349,12 +345,6 @@ function viewActions() {
     <span class="label" style="margin:12px 2px 6px">Tighten it now</span>${lower.length ? `<div class="seg" style="--n:${lower.length}">${lower.map(l => `<button data-lim="${l}" data-mode="tighten">${limName(l)}</button>`).join('')}</div>` : '<p class="fine">Already at the tightest.</p>'}
     <span class="label" style="margin:14px 2px 6px">Allow more today</span>${higher.length ? `<div class="seg" style="--n:${higher.length}">${higher.map(l => `<button data-lim="${l}" data-mode="loosen">${limName(l)}</button>`).join('')}</div>` : '<p class="fine">Already at the most.</p>'}
     <p class="fine" style="margin-top:10px">Just for today. Tomorrow the usual plan applies again.</p>` : `<p>No screen time limit is set on the phone today.</p>`}</div>`;
-  // bored idea
-  h += `<div class="card grp"><h3>An idea for I'm Bored</h3><p>Shows up 3x as often when ${esc(kid())} taps I'm bored.</p>
-    <label class="field"><span class="label">Idea</span><input id="iN" maxlength="40" value="${esc(A.idea)}" placeholder="Fix the bike with Dad" autocomplete="off"></label>
-    <span class="label" style="margin:14px 2px 6px">Minutes</span><div class="seg" style="--n:5">${IDEA_MINS.map(m => `<button data-imin="${m}" aria-pressed="${A.imin === m}">${m}</button>`).join('')}</div>
-    <label class="field"><span class="label">Kind</span><select id="iC">${CATS.map(([id, n]) => `<option value="${id}"${id === A.icat ? ' selected' : ''}>${n}</option>`).join('')}</select></label>
-    <button class="go" data-a="idea" style="margin-top:12px"${A.idea.trim() ? '' : ' disabled'}>Add idea</button></div>`;
   h += '</div>';
   // the requests
   const cmds = (ST.cmds || []).slice(0, 15);
@@ -376,7 +366,7 @@ const bind = {
   },
   actions() {
     const m = $('main');
-    const amt = $('cAmt'), note = $('cNote'), cerr = $('cErr'), idea = $('iN');
+    const amt = $('cAmt'), note = $('cNote'), cerr = $('cErr');
     const coins = ST.snap ? ST.snap.coins : 0;
     const max = () => (A.mode === 'give' ? 500 : Math.min(500, coins));
     const valid = () => {
@@ -389,19 +379,15 @@ const bind = {
     };
     amt.oninput = () => { A.amt = +amt.value || 0; valid(); };
     note.oninput = () => { A.note = note.value; };
-    idea.oninput = () => { A.idea = idea.value; m.querySelector('[data-a=idea]').disabled = !idea.value.trim(); };
-    $('iC').onchange = e => { A.icat = e.target.value; };
     valid();
     m.onclick = e => {
       const b = e.target.closest('button'); if (!b || b.disabled) return;
       if (b.dataset.cm) { A.mode = b.dataset.cm; render(); }
       else if (b.dataset.amt) { A.amt = +b.dataset.amt; amt.value = A.amt; valid(); }
-      else if (b.dataset.imin) { A.imin = +b.dataset.imin; for (const x of m.querySelectorAll('[data-imin]')) x.setAttribute('aria-pressed', x === b); }
       else if (b.dataset.lim) confirmCmd('limit', { limit: +b.dataset.lim, mode: b.dataset.mode });
       else if (b.dataset.cancel) cancelCmd(b.dataset.cancel);
       else if (b.dataset.a === 'hw_end' || b.dataset.a === 'hw_start') confirmCmd(b.dataset.a, {});
       else if (b.dataset.a === 'coins') { const n = valid(); if (n) confirmCmd('coins', { n: A.mode === 'give' ? n : -n, w: A.note.replace(/\s+/g, ' ').trim().slice(0, 60) }); }
-      else if (b.dataset.a === 'idea') { const n = A.idea.replace(/\s+/g, ' ').trim().slice(0, 40); if (n) confirmCmd('idea', { n, min: A.imin, cat: A.icat }); }
     };
   },
   settings() { bindSettings(); },
@@ -411,7 +397,6 @@ const CONFIRM = {
   hw_start: () => [`Start homework now?`, `Homework mode starts on ${kidS()} phone: only the allowed apps open till the time's done and a photo is taken.`],
   coins: a => [a.n > 0 ? `Give ${a.n} coins?` : `Take back ${-a.n} coins?`, `${a.n > 0 ? 'Added to' : 'Taken from'} ${kidS()} coins${a.w ? `, with the note "${a.w}"` : ''}. It shows on the phone as from a parent.`],
   limit: a => [a.mode === 'tighten' ? `Limit today to ${limName(a.limit)}?` : `Allow ${limName(a.limit)} today?`, `${a.mode === 'tighten' ? 'Tighter' : 'More time'} on the limited apps, starting now, just for today.`],
-  idea: a => [`Add "${a.n}"?`, `${a.min} min · ${(CATS.find(c => c[0] === a.cat) || ['', ''])[1]}. It goes on the I'm Bored list on ${kidS()} phone.`],
 };
 function confirmCmd(kind, args) {
   const [q, sub] = CONFIRM[kind](args);
@@ -426,7 +411,6 @@ async function sendCmd(kind, args, quiet) {
     const r = await api('/parent/cmd', { method: 'POST', body: { kind, args } });
     ST.cmds = [r.cmd, ...(ST.cmds || [])];
     if (kind === 'coins') { A.note = ''; }
-    if (kind === 'idea') { A.idea = ''; }
     toast(quiet ? 'Sent to the phone.' : `Sent. Waiting for ${kidS()} phone.`);
     render();
   } catch (e) {
@@ -462,7 +446,7 @@ function viewSettings() {
       <button class="danger" id="leave" style="margin-top:12px">Unlink this phone</button></div>
     <div class="sec"><h2>What's shared</h2></div><div class="card"><ul class="share">
       <li>Screen time: minutes per day and the most used apps' names</li><li>Homework: when it ran, how it ended, and photos only if they're switched on in Parent mode</li>
-      <li>Phone-free minutes, check-ins, quests, coins, push-up unlocks</li><li>Alerts like the blocker being switched off</li></ul>
+      <li>Check-ins, quests, coins, push-up unlocks</li><li>Alerts like the blocker being switched off</li></ul>
       <p class="fine">Never messages, browsing, location or contacts. ${esc(kid())} sees "Family link on" in LEVEL UP whenever it's on. Everything older than 30 days is deleted automatically; Unlink &amp; delete in Parent mode deletes it all.</p></div>`;
 }
 async function bindSettings() {

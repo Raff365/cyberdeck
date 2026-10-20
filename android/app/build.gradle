@@ -28,9 +28,26 @@ android {
 
     buildTypes {
         release {
-            minifyEnabled false
+            // R8 drops the unused parts of androidx (most of classes.dex) and shrinkResources the resources
+            // only they used. What JavaScript and Android reach by name is kept in proguard-rules.pro.
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             signingConfig signingConfigs.release
         }
+    }
+
+    packaging {
+        resources {
+            // build metadata of the libraries, never read at runtime
+            excludes += ['META-INF/*.version', 'META-INF/*.kotlin_module', 'kotlin/**', 'DebugProbesKt.bin']
+        }
+    }
+
+    // the encrypted dependency list Google Play reads; this APK is sideloaded
+    dependenciesInfo {
+        includeInApk false
+        includeInBundle false
     }
 
     compileOptions {
