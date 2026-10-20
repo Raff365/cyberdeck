@@ -45,7 +45,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class MainActivity extends Activity {
     private static final String HOST = "appassets.androidplatform.net";
     private static final String START = "https://" + HOST + "/assets/www/index.html";
-    private static final int PICK_FILE = 1, CAMERA = 2;
+    private static final int PICK_FILE = 1, CAMERA = 2, NOTIFY = 3;
     private static final int GROUND = Color.rgb(0x0c, 0x0a, 0x1d);
 
     static final String OPEN = "levelup.open";   // "workout" | "pushups" | "homework": sent by the block screen
@@ -200,6 +200,10 @@ public class MainActivity extends Activity {
 
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
+        if (requestCode == NOTIFY) {   // alarms: the page shows what's still missing
+            if (pageReady) js("window.levelupAlarmChanged && window.levelupAlarmChanged()");
+            return;
+        }
         if (requestCode != CAMERA || camAsk == null) return;
         if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) camAsk.grant(new String[] { PermissionRequest.RESOURCE_VIDEO_CAPTURE });
         else camAsk.deny();
@@ -257,6 +261,8 @@ public class MainActivity extends Activity {
         }
         // back from Settings (Usage access, the blocker) or from a limited app: the numbers may have moved
         if (pageReady) js("window.levelupScreenTimeChanged && window.levelupScreenTimeChanged()");
+        // back from an alarm (its "you're up" note) or from Settings (exact alarms, notifications, full screen)
+        if (pageReady) js("window.levelupAlarmChanged && window.levelupAlarmChanged()");
         FamilySync.opened(this);
     }
 
@@ -762,6 +768,57 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void familySync() {
             FamilySync.kick(MainActivity.this);
+        }
+
+        // ---- alarms (Alarms): the list lives here so they ring with the app closed; JSON strings in and out
+
+        /** {sdk, exact, notify, fullScreen, asked, h24, sensor, ringing, next, woke?: {at, up, sec, missed, taps}}. */
+        @JavascriptInterface
+        public String alarmStatus() {
+            return Alarms.statusJson(MainActivity.this);
+        }
+
+        @JavascriptInterface
+        public String alarmList() {
+            return Alarms.listJson(MainActivity.this);
+        }
+
+        /** {id?, h, m, days:[0-6], text, on}: {ok, alarm:{..., next}, next} | {ok:false, why: "bad" | "full" | "failed"}. */
+        @JavascriptInterface
+        public String alarmSave(String json) {
+            return Alarms.saveJson(MainActivity.this, json);
+        }
+
+        @JavascriptInterface
+        public String alarmDelete(String id) {
+            return Alarms.deleteJson(MainActivity.this, id);
+        }
+
+        /** The page showed the "you're up" note. */
+        @JavascriptInterface
+        public void alarmSeen() {
+            Alarms.seen(MainActivity.this);
+        }
+
+        /** "notify" (Android's permission dialog the first time, then Settings) | "exact" | "fullscreen". False: nothing opened. */
+        @JavascriptInterface
+        public boolean alarmFix(String which) {
+            if ("notify".equals(which) && Build.VERSION.SDK_INT >= 33
+                    && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                    && (!Alarms.askedNotify(MainActivity.this) || shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS))) {
+                Alarms.markAsked(MainActivity.this);
+                runOnUiThread(() -> requestPermissions(new String[] { Manifest.permission.POST_NOTIFICATIONS }, NOTIFY));
+                return true;
+            }
+            if (!"notify".equals(which) && !"exact".equals(which) && !"fullscreen".equals(which)) return false;
+            for (Intent i : Alarms.fixIntents(MainActivity.this, which)) {
+                try {
+                    startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                    return true;
+                } catch (Exception ignored) {
+                }
+            }
+            return false;
         }
 
         /** A limited app's name, for "Back to TikTok". "" if it isn't one. */

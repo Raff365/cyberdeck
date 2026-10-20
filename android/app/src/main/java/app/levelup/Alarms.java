@@ -453,6 +453,7 @@ final class Alarms {
         }
     }
 
+    @SuppressWarnings("deprecation")
     static void missed(Context c, long at, String text) {
         try {
             channels(c);

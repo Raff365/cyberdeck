@@ -17,6 +17,22 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
+    <!-- alarms (Alarms, AlarmService, AlarmActivity). Exact times: USE_EXACT_ALARM from Android 13 (granted at install);
+         on 12 SCHEDULE_EXACT_ALARM, which the user can switch off (the app checks and links to the switch). -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" android:maxSdkVersion="32" />
+    <!-- Android 13+: asked the first time an alarm is saved -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- the alarm screen over the lock screen (Android 14 lets the user take it away; the app checks and links to it) -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- AlarmManager forgets alarms on a reboot: put the next one back -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- shake to stop; phones without one tap instead -->
+    <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="false" />
+
     <!-- see launchable apps (the picker) and home apps (never limited), without QUERY_ALL_PACKAGES -->
     <queries>
         <intent>
@@ -81,6 +97,36 @@
             android:taskAffinity=""
             android:excludeFromRecents="true"
             android:noHistory="true"
+            android:screenOrientation="portrait"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|uiMode|density" />
+
+        <!-- alarms: AlarmManager's PendingIntent (FIRE) and the system's reboot / update / clock broadcasts. Not exported:
+             the system still delivers its own broadcasts to it. -->
+        <receiver
+            android:name=".AlarmReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
+        <!-- the ringing: sound and buzz while the screen is off -->
+        <service
+            android:name=".AlarmService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+        <!-- shake to stop: over the lock screen, turns the screen on, its own task, never in recents -->
+        <activity
+            android:name=".AlarmActivity"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:taskAffinity="app.levelup.alarm"
+            android:excludeFromRecents="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
             android:screenOrientation="portrait"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|uiMode|density" />
     </application>

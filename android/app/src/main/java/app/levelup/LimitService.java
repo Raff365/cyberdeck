@@ -165,9 +165,9 @@ public class LimitService extends AccessibilityService {
         // the block screen is in front now, so the next window of the limited app always counts as a change
         fg = getPackageName();
         // if the block screen did not come up (an OEM blocked the start), send the user home instead. Not when
-        // something else has come to the front since (fg moved on to another app).
+        // something else has come to the front since (fg moved on to another app), nor over a ringing alarm's screen.
         h.postDelayed(() -> {
-            if (BlockActivity.shownAt < now && (pkg.equals(fg) || getPackageName().equals(fg)) && !ScreenTime.inCall(this))
+            if (BlockActivity.shownAt < now && (pkg.equals(fg) || getPackageName().equals(fg)) && !ScreenTime.inCall(this) && !AlarmActivity.showing)
                 performGlobalAction(GLOBAL_ACTION_HOME);
         }, 1500);
     }
